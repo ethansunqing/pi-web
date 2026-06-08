@@ -630,10 +630,10 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
     }).catch(() => {});
   }, [isNew, modelsRefreshKey, setNewSessionModel]);
 
-  // Compact error auto-dismiss
+  // Compact error auto-dismiss (longer timeout so users can read the error)
   useEffect(() => {
     if (!compactError) return;
-    const t = setTimeout(() => setCompactError(null), 3000);
+    const t = setTimeout(() => setCompactError(null), 10000);
     return () => clearTimeout(t);
   }, [compactError]);
 
