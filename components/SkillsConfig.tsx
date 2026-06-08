@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useEffect, useCallback, useRef } from "react";
+import { useTranslations } from "next-intl";
 import type { SkillSearchResult } from "@/app/api/skills/search/route";
 
 interface Skill {
@@ -37,14 +38,15 @@ function Toggle({
   loading: boolean;
   onToggle: () => void;
 }) {
+  const st = useTranslations("skills");
   return (
     <button
       onClick={onToggle}
       disabled={loading}
       title={
         enabled
-          ? "Visible in model prompt — click to disable"
-          : "Hidden from model prompt — click to enable"
+          ? st("toggleEnable")
+          : st("toggleDisable")
       }
       style={{
         flexShrink: 0,
@@ -90,6 +92,7 @@ function SkillDetail({
   toggling: boolean;
   saveError: string | null;
 }) {
+  const sdt = useTranslations("skills");
   const label = sourceLabel(skill);
   const enabled = !skill.disableModelInvocation;
 
@@ -119,7 +122,7 @@ function SkillDetail({
               label === "project" ? "rgba(99,102,241,0.8)" : "var(--text-dim)",
           }}
         >
-          {label}
+          {sdt(label as "global" | "project" | "path")}
         </span>
         <span
           style={{
@@ -150,7 +153,7 @@ function SkillDetail({
         <span
           style={{ fontSize: 12, color: "var(--text-muted)", fontWeight: 500 }}
         >
-          Name
+          {sdt("name")}
         </span>
         <span
           style={{
@@ -167,7 +170,7 @@ function SkillDetail({
         <span
           style={{ fontSize: 12, color: "var(--text-muted)", fontWeight: 500 }}
         >
-          Description
+          {sdt("description")}
         </span>
         <span
           style={{ fontSize: 14, color: "var(--text-muted)", lineHeight: 1.6 }}
@@ -186,6 +189,7 @@ function AddSkillPanel({
   cwd: string;
   onInstalled: () => void;
 }) {
+  const at = useTranslations("skills");
   const [query, setQuery] = useState("");
   const [results, setResults] = useState<SkillSearchResult[]>([]);
   const [searching, setSearching] = useState(false);
@@ -220,7 +224,7 @@ function AddSkillPanel({
         return;
       }
       setResults(d.results ?? []);
-      if ((d.results ?? []).length === 0) setSearchError("No skills found");
+      if ((d.results ?? []).length === 0) setSearchError(at("noSkillsFound"));
     } catch (e) {
       setSearchError(String(e));
     } finally {
@@ -271,7 +275,7 @@ function AddSkillPanel({
         }}
       >
         <div style={{ fontSize: 14, fontWeight: 600, color: "var(--text)" }}>
-          Add Skill
+          {at("addSkill")}
         </div>
 
         {/* Search row */}
@@ -283,7 +287,7 @@ function AddSkillPanel({
             onKeyDown={(e) => {
               if (e.key === "Enter") search(query);
             }}
-            placeholder="e.g. react, testing, deploy"
+            placeholder={at("searchPlaceholder")}
             style={{
               flex: 1,
               padding: "7px 10px",
@@ -310,7 +314,7 @@ function AddSkillPanel({
               flexShrink: 0,
             }}
           >
-            {searching ? "Searching…" : "Search"}
+            {searching ? at("searching") : at("search")}
           </button>
         </div>
 
@@ -474,10 +478,10 @@ function AddSkillPanel({
                   }}
                 >
                   {isInstalled
-                    ? "✓ Installed"
+                    ? at("installed")
                     : isInstalling
-                      ? "Installing…"
-                      : "Install"}
+                      ? at("installing")
+                      : at("install")}
                 </button>
               </div>
             );
@@ -489,16 +493,7 @@ function AddSkillPanel({
           <div
             style={{ fontSize: 13, color: "var(--text-dim)", lineHeight: 1.8 }}
           >
-            Search{" "}
-            <a
-              href="https://skills.sh"
-              target="_blank"
-              rel="noreferrer"
-              style={{ color: "var(--accent)", textDecoration: "none" }}
-            >
-              skills.sh
-            </a>{" "}
-            to discover and install skills for your agent.
+            {at("searchPrompt")}
           </div>
         )
       )}
@@ -513,6 +508,7 @@ export function SkillsConfig({
   cwd: string;
   onClose: () => void;
 }) {
+  const sc = useTranslations("skills");
   const [skills, setSkills] = useState<Skill[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -624,7 +620,7 @@ export function SkillsConfig({
             <span
               style={{ fontSize: 15, fontWeight: 700, color: "var(--text)" }}
             >
-              Skills
+              {sc("title")}
             </span>
             <code
               style={{
@@ -678,7 +674,7 @@ export function SkillsConfig({
                     color: "var(--text-muted)",
                   }}
                 >
-                  Loading…
+                  {sc("loading")}
                 </div>
               ) : error ? (
                 <div
@@ -698,7 +694,7 @@ export function SkillsConfig({
                     color: "var(--text-dim)",
                   }}
                 >
-                  No skills found
+                  {sc("noSkillsFound")}
                 </div>
               ) : (
                 (() => {
@@ -723,7 +719,7 @@ export function SkillsConfig({
                             letterSpacing: "0.06em",
                           }}
                         >
-                          {grpLabel}
+                          {sc(grpLabel as "global" | "project" | "path")}
                         </div>
                         {grpSkills.map((skill) => {
                           const isSelected =
@@ -840,7 +836,7 @@ export function SkillsConfig({
                   <line x1="12" y1="5" x2="12" y2="19" />
                   <line x1="5" y1="12" x2="19" y2="12" />
                 </svg>
-                Add skill
+                {sc("addSkill")}
               </div>
             </div>
           </div>
@@ -874,7 +870,7 @@ export function SkillsConfig({
                   fontSize: 13,
                 }}
               >
-                Select a skill
+                {sc("selectSkill")}
               </div>
             )}
           </div>
@@ -903,7 +899,7 @@ export function SkillsConfig({
               fontSize: 13,
             }}
           >
-            Close
+            {sc("close")}
           </button>
         </div>
       </div>

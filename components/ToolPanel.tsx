@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useRef } from "react";
+import { useTranslations } from "next-intl";
 
 export interface ToolEntry {
   name: string;
@@ -27,13 +28,14 @@ interface Props {
   onClose: () => void;
 }
 
-const PRESETS: { id: ToolPreset; label: string; desc: string; tools: string[] }[] = [
-  { id: "none",    label: "Off",  desc: "No tools",                                tools: PRESET_NONE },
-  { id: "default", label: "Low",  desc: "read · bash · edit · write",              tools: PRESET_DEFAULT },
-  { id: "full",    label: "High", desc: "read · bash · edit · write · grep · find · ls", tools: PRESET_FULL },
+const PRESETS: { id: ToolPreset; labelKey: "toolOff" | "toolLow" | "toolHigh"; descKey: "toolOffDesc" | "toolLowDesc" | "toolHighDesc"; tools: string[] }[] = [
+  { id: "none",    labelKey: "toolOff",  descKey: "toolOffDesc",  tools: PRESET_NONE },
+  { id: "default", labelKey: "toolLow",  descKey: "toolLowDesc",  tools: PRESET_DEFAULT },
+  { id: "full",    labelKey: "toolHigh", descKey: "toolHighDesc", tools: PRESET_FULL },
 ];
 
 export function ToolPanel({ tools, onPreset, onClose }: Props) {
+  const tp = useTranslations("chat");
   const panelRef = useRef<HTMLDivElement>(null);
   const current = getPresetFromTools(tools);
 
@@ -96,7 +98,7 @@ export function ToolPanel({ tools, onPreset, onClose }: Props) {
                 transition: "all 0.12s",
               }}
             >
-              {preset.label}
+              {tp(preset.labelKey)}
             </button>
           );
         })}
@@ -104,8 +106,8 @@ export function ToolPanel({ tools, onPreset, onClose }: Props) {
 
       {/* Description of current selection */}
       <div style={{ fontSize: 11, color: "var(--text-dim)", lineHeight: 1.5 }}>
-        {currentIndex >= 0 ? PRESETS[currentIndex].desc || "No tools enabled" : ""}
-        {current === "none" && <span> — agent will not use any tools</span>}
+        {currentIndex >= 0 ? tp(PRESETS[currentIndex].descKey) : ""}
+        {current === "none" && <span>{tp("noToolsNote")}</span>}
       </div>
 
       {/* Track bar */}
@@ -123,7 +125,7 @@ export function ToolPanel({ tools, onPreset, onClose }: Props) {
       </div>
 
       <div style={{ fontSize: 10, color: "var(--text-dim)" }}>
-        takes effect on next turn
+        {tp("nextTurnEffect")}
       </div>
     </div>
   );

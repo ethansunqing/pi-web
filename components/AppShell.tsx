@@ -2,6 +2,7 @@
 
 import { useState, useCallback, useRef, useEffect } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
+import { useLocale, useTranslations } from "next-intl";
 import { SessionSidebar } from "./SessionSidebar";
 import { ChatWindow } from "./ChatWindow";
 import { FileViewer } from "./FileViewer";
@@ -16,6 +17,9 @@ import type { ChatInputHandle } from "./ChatInput";
 export function AppShell() {
   const router = useRouter();
   const searchParams = useSearchParams();
+  const locale = useLocale();
+  const sh = useTranslations("shell");
+  const cht = useTranslations("chat");
   const { isDark, toggleTheme } = useTheme();
   const [selectedSession, setSelectedSession] = useState<SessionInfo | null>(null);
   // When user clicks +, we only store the cwd — no fake session id
@@ -27,6 +31,9 @@ export function AppShell() {
   const [modelsRefreshKey, setModelsRefreshKey] = useState(0);
   const [skillsConfigOpen, setSkillsConfigOpen] = useState(false);
   const [sidebarOpen, setSidebarOpen] = useState(true);
+  const [localeMenuOpen, setLocaleMenuOpen] = useState(false);
+  const localeMenuRef = useRef<HTMLDivElement>(null);
+  const localeBtnRef = useRef<HTMLButtonElement>(null);
   const chatInputRef = useRef<ChatInputHandle | null>(null);
   const topBarRef = useRef<HTMLDivElement>(null);
 
@@ -83,6 +90,17 @@ export function AppShell() {
     ro.observe(topBarRef.current);
     return () => ro.disconnect();
   }, [activeTopPanel]);
+
+  useEffect(() => {
+    if (!localeMenuOpen) return;
+    const handler = (e: MouseEvent) => {
+      if (localeMenuRef.current && !localeMenuRef.current.contains(e.target as Node)) {
+        setLocaleMenuOpen(false);
+      }
+    };
+    document.addEventListener("mousedown", handler);
+    return () => document.removeEventListener("mousedown", handler);
+  }, [localeMenuOpen]);
 
   // Right panel — file tabs only
   const [fileTabs, setFileTabs] = useState<Tab[]>([]);
@@ -245,7 +263,7 @@ export function AppShell() {
       <div style={{ padding: "8px", flexShrink: 0, display: "flex", justifyContent: "space-between", gap: 4 }}>
         {([
           {
-            label: "Models",
+            label: sh("models"),
             onClick: () => setModelsConfigOpen(true),
             disabled: false,
             icon: (
@@ -259,7 +277,7 @@ export function AppShell() {
             ),
           },
           {
-            label: "Skills",
+            label: sh("skills"),
             onClick: () => setSkillsConfigOpen(true),
             disabled: !activeCwd && !selectedSession?.cwd && !newSessionCwd,
             icon: (
@@ -333,7 +351,7 @@ export function AppShell() {
         <div ref={topBarRef} style={{ display: "flex", alignItems: "center", flexShrink: 0, borderBottom: "1px solid var(--border)", height: 36, background: "var(--bg-panel)" }}>
           <button
             onClick={() => setSidebarOpen((v) => !v)}
-            title={sidebarOpen ? "Hide sidebar" : "Show sidebar"}
+            title={sidebarOpen ? sh("hideSidebar") : sh("showSidebar")}
             style={{
               display: "flex", alignItems: "center", justifyContent: "center",
               width: 36, height: 36, padding: 0,
@@ -358,8 +376,8 @@ export function AppShell() {
               const rect = e.currentTarget.getBoundingClientRect();
               toggleTheme({ x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 });
             }}
-            title={isDark ? "Switch to light mode" : "Switch to dark mode"}
-            aria-label={isDark ? "Switch to light mode" : "Switch to dark mode"}
+            title={isDark ? sh("lightMode") : sh("darkMode")}
+            aria-label={isDark ? sh("lightMode") : sh("darkMode")}
             aria-pressed={isDark}
             style={{
               display: "flex", alignItems: "center", justifyContent: "center",
@@ -384,6 +402,71 @@ export function AppShell() {
               </svg>
             )}
           </button>
+          <div ref={localeMenuRef} style={{ position: "relative", display: "flex" }}>
+            <button
+              ref={localeBtnRef}
+              onClick={() => setLocaleMenuOpen((v) => !v)}
+              title={sh("switchLanguage")}
+              style={{
+                display: "flex", alignItems: "center", justifyContent: "center",
+                width: 36, height: 36, padding: 0,
+                background: localeMenuOpen ? "var(--bg-selected)" : "none",
+                border: "none", borderRight: "1px solid var(--border)",
+                color: localeMenuOpen ? "var(--text)" : "var(--text-muted)",
+                cursor: "pointer", flexShrink: 0,
+                transition: "color 0.12s, background 0.12s",
+              }}
+              onMouseEnter={(e) => { if (!localeMenuOpen) e.currentTarget.style.color = "var(--text)"; }}
+              onMouseLeave={(e) => { if (!localeMenuOpen) e.currentTarget.style.color = "var(--text-muted)"; }}
+            >
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <circle cx="12" cy="12" r="10" />
+                <ellipse cx="12" cy="12" rx="4" ry="10" />
+                <line x1="2" y1="12" x2="22" y2="12" />
+              </svg>
+            </button>
+            {localeMenuOpen && (() => {
+              const btnRect = localeBtnRef.current?.getBoundingClientRect();
+              return (
+                <div style={{
+                  position: "fixed", top: btnRect ? btnRect.bottom + 4 : 40, left: btnRect ? btnRect.right : 60, zIndex: 9999,
+                  background: "var(--bg)", border: "1px solid var(--border)", borderRadius: 8,
+                  boxShadow: "0 6px 20px rgba(0,0,0,0.12)", overflow: "hidden", minWidth: 110,
+                  transform: "translateX(-100%)",
+                }}>
+                  {(["zh-CN", "en"] as const).map((l) => (
+                    <button
+                      key={l}
+                      onClick={() => {
+                        setLocaleMenuOpen(false);
+                        if (l !== locale) {
+                          document.cookie = `NEXT_LOCALE=${l};path=/;max-age=31536000`;
+                          window.location.reload();
+                        }
+                      }}
+                      style={{
+                        display: "flex", alignItems: "center", gap: 8,
+                        width: "100%", padding: "8px 14px",
+                        background: l === locale ? "var(--bg-selected)" : "none",
+                        border: "none", color: l === locale ? "var(--text)" : "var(--text-muted)",
+                        cursor: "pointer", fontSize: 13, textAlign: "left", fontWeight: l === locale ? 600 : 400,
+                      }}
+                      onMouseEnter={(e) => { if (l !== locale) e.currentTarget.style.background = "var(--bg-hover)"; }}
+                      onMouseLeave={(e) => { if (l !== locale) e.currentTarget.style.background = "none"; }}
+                    >
+                      {l === locale && (
+                        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="var(--accent)" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round">
+                          <polyline points="20 6 9 17 4 12" />
+                        </svg>
+                      )}
+                      {l !== locale && <span style={{ width: 12 }} />}
+                      {l === "zh-CN" ? sh("chinese") : sh("english")}
+                    </button>
+                  ))}
+                </div>
+              );
+            })()}
+          </div>
           {showChat && (
             <div style={{ display: "flex", alignItems: "stretch", height: "100%" }}>
               <BranchNavigator
@@ -419,7 +502,7 @@ export function AppShell() {
                   <line x1="8" y1="13" x2="16" y2="13" />
                   <line x1="8" y1="17" x2="13" y2="17" />
                 </svg>
-                <span>System</span>
+                <span>{sh("system")}</span>
               </button>
             </div>
           )}
@@ -441,15 +524,15 @@ export function AppShell() {
 
             const tooltipParts: string[] = [];
             if (t) {
-              tooltipParts.push(`in: ${t.input.toLocaleString()}`);
-              tooltipParts.push(`out: ${t.output.toLocaleString()}`);
-              tooltipParts.push(`cache read: ${t.cacheRead.toLocaleString()}`);
-              tooltipParts.push(`cache write: ${t.cacheWrite.toLocaleString()}`);
-              if (c > 0) tooltipParts.push(`cost: $${c.toFixed(4)}`);
+              tooltipParts.push(`${cht("tokensIn")}: ${t.input.toLocaleString()}`);
+              tooltipParts.push(`${cht("tokensOut")}: ${t.output.toLocaleString()}`);
+              tooltipParts.push(`${cht("tokensCacheRead")}: ${t.cacheRead.toLocaleString()}`);
+              tooltipParts.push(`${cht("tokensCacheWrite")}: ${t.cacheWrite.toLocaleString()}`);
+              if (c > 0) tooltipParts.push(`${cht("tokensCost")}: $${c.toFixed(4)}`);
             }
             if (contextUsage?.contextWindow) {
               const pct = contextUsage.percent;
-              tooltipParts.push(`context: ${pct !== null ? pct.toFixed(1) + "%" : "unknown"} of ${contextUsage.contextWindow.toLocaleString()} tokens`);
+              tooltipParts.push(`${cht("context")}: ${pct !== null ? pct.toFixed(1) + "%" : cht("unknown")} ${cht("contextOf")} ${contextUsage.contextWindow.toLocaleString()} ${cht("contextTokens")}`);
             }
             const tooltip = tooltipParts.join("  |  ");
 
@@ -536,11 +619,11 @@ export function AppShell() {
                     </div>
                   ) : systemPrompt === "" ? (
                     <div style={{ padding: "10px 16px", fontSize: 12, color: "var(--text-muted)", fontStyle: "italic" }}>
-                      System prompt is empty (tools are disabled)
+                      {sh("systemPromptEmpty")}
                     </div>
                   ) : (
                     <div style={{ padding: "10px 16px", fontSize: 12, color: "var(--text-muted)", fontStyle: "italic" }}>
-                      Send a message to load the system prompt
+                      {sh("systemPromptWaiting")}
                     </div>
                   )}
                 </div>
@@ -570,7 +653,7 @@ export function AppShell() {
           ) : showPlaceholder ? (
             activeCwd ? (
               <div style={{ height: "100%", display: "flex", alignItems: "center", justifyContent: "center", color: "var(--text-muted)", fontSize: 15 }}>
-                Select a session from the sidebar
+                {sh("selectSession")}
               </div>
             ) : (
               <div style={{ position: "absolute", top: 12, left: 12, display: "flex", alignItems: "flex-start", gap: 8, userSelect: "none", pointerEvents: "none" }}>
@@ -578,10 +661,10 @@ export function AppShell() {
                   <line x1="20" y1="12" x2="4" y2="12" /><polyline points="10 6 4 12 10 18" />
                 </svg>
                 <div>
-                  <div style={{ fontSize: 18, fontWeight: 600, color: "var(--text)", marginBottom: 8 }}>Get Started</div>
+                  <div style={{ fontSize: 18, fontWeight: 600, color: "var(--text)", marginBottom: 8 }}>{sh("getStarted")}</div>
                   <div style={{ fontSize: 12, color: "var(--text-muted)", lineHeight: 1.8 }}>
-                    <span style={{ color: "var(--text-dim)", marginRight: 6 }}>1.</span>Select a project directory from the sidebar<br />
-                    <span style={{ color: "var(--text-dim)", marginRight: 6 }}>2.</span>Add models via the <strong style={{ color: "var(--text)" }}>Models</strong> button at the bottom
+                    <span style={{ color: "var(--text-dim)", marginRight: 6 }}>1.</span>{sh("step1")}<br />
+                    <span style={{ color: "var(--text-dim)", marginRight: 6 }}>2.</span>{sh("step2")} <strong style={{ color: "var(--text)" }}>{sh("models")}</strong> {sh("step2b")}
                   </div>
                 </div>
               </div>
@@ -619,7 +702,7 @@ export function AppShell() {
             <FileViewer filePath={activeFileTab.filePath} cwd={activeCwd ?? undefined} />
           ) : (
             <div style={{ height: "100%", display: "flex", alignItems: "center", justifyContent: "center", color: "var(--text-dim)", fontSize: 12 }}>
-              No file open
+              {sh("noFileOpen")}
             </div>
           )}
         </div>
@@ -628,7 +711,7 @@ export function AppShell() {
     {/* File panel toggle — always visible at top-right */}
     <button
       onClick={() => setRightPanelOpen((v) => !v)}
-      title={rightPanelOpen ? "Hide file panel" : "Show file panel"}
+      title={rightPanelOpen ? sh("filePanelHide") : sh("filePanelShow")}
       style={{
         position: "fixed", top: 0, right: 0, zIndex: 300,
         display: "flex", alignItems: "center", justifyContent: "center",
