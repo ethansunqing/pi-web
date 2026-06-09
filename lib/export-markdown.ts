@@ -9,7 +9,6 @@ import type {
   ThinkingContent,
   ToolCallContent,
   ToolResultMessage,
-  AssistantContentBlock,
 } from "./types";
 
 // ---------------------------------------------------------------------------
@@ -24,17 +23,6 @@ function formatTimestamp(ts?: number): string {
   if (!ts) return "";
   const d = new Date(ts);
   return d.toLocaleString();
-}
-
-function contentBlockToText(block: AssistantContentBlock): string {
-  if (block.type === "text") return (block as TextContent).text;
-  if (block.type === "thinking") return ""; // handled separately
-  if (block.type === "toolCall") {
-    const tc = block as ToolCallContent;
-    const input = JSON.stringify(tc.input, null, 2);
-    return `🔧 **${tc.toolName}**\n\`\`\`json\n${input}\n\`\`\``;
-  }
-  return "";
 }
 
 // ---------------------------------------------------------------------------

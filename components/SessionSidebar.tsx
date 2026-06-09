@@ -20,7 +20,7 @@ interface Props {
   onAtMention?: (relativePath: string) => void;
 }
 
-function formatRelativeTime(dateStr: string, st: ReturnType<any>): string {
+function formatRelativeTime(dateStr: string, st: ReturnType<typeof useTranslations>): string {
   const date = new Date(dateStr);
   const now = new Date();
   const diff = now.getTime() - date.getTime();
@@ -950,7 +950,7 @@ function SessionItem({
   const handleExport = useCallback(async (e: React.MouseEvent) => {
     e.stopPropagation();
     try {
-      const res = await fetch(`/api/sessions/${encodeURIComponent(session.id)}/export`);
+      const res = await fetch(`/api/sessions/${encodeURIComponent(session.id)}/export?format=markdown`);
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const blob = await res.blob();
       const url = URL.createObjectURL(blob);
