@@ -1,5 +1,11 @@
 # 更新日志
 
+## 2026-06-11
+
+### 升级 pi 依赖到 v0.79.1
+- @earendil-works/pi-ai: 0.79.0 -> 0.79.1
+- @earendil-works/pi-coding-agent: 0.79.0 -> 0.79.1
+
 ## 2026-06-08
 
 ### 集成 PR #52: normalizeCwd 提取 + KaTeX 数学公式 + compressTree
