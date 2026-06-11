@@ -2,7 +2,7 @@ import { randomUUID } from "crypto";
 import { execFile } from "child_process";
 import { existsSync, mkdirSync, readFileSync, rmSync } from "fs";
 import { tmpdir } from "os";
-import { basename, dirname, join } from "path";
+import { dirname, join } from "path";
 import { promisify } from "util";
 import { fileURLToPath } from "url";
 import { NextResponse } from "next/server";
@@ -29,26 +29,26 @@ function getAttachmentDisposition(fileName: string): string {
   return `attachment; filename="${fallback}"; filename*=UTF-8''${encodeHeaderValue(fileName)}`;
 }
 
-async function getPiCliPath(): Promise<string> {
-  const resolver = (import.meta as ImportMeta & {
-    resolve?: (specifier: string) => string | Promise<string>;
-  }).resolve;
-  if (typeof resolver === "function") {
-    const indexUrl = await resolver("@earendil-works/pi-coding-agent");
-    return join(dirname(fileURLToPath(indexUrl)), "cli.js");
-  }
+function sanitizeExportBaseName(name: string | undefined): string {
+  const normalized = (name ?? "")
+    .replace(/[\u0000-\u001f\u007f]/g, " ")
+    .replace(/[<>:"/\\|?*\r\n\t]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
 
-  return join(
-    process.cwd(),
-    "node_modules",
-    "@earendil-works",
-    "pi-coding-agent",
-    "dist",
-    "cli.js"
-  );
+  const safeName = normalized
+    .replace(/[^a-zA-Z0-9\u4e00-\u9fff_\-. ]/g, "_")
+    .replace(/_+/g, "_")
+    .trim()
+    .slice(0, 80);
+
+  return safeName || "Session Export";
 }
 
-async function exportMarkdown(id: string, filePath: string): Promise<Response> {
+async function getExportContext(id: string, filePath: string): Promise<{
+  exportContext: ExportContext;
+  fileBaseName: string;
+}> {
   const sessionManager = SessionManager.open(filePath);
   const entries = sessionManager.getEntries() as never;
   const context = buildSessionContext(entries, sessionManager.getLeafId());
@@ -71,21 +71,48 @@ async function exportMarkdown(id: string, filePath: string): Promise<Response> {
       : undefined,
   };
 
+  return {
+    exportContext,
+    fileBaseName: sanitizeExportBaseName(exportContext.name),
+  };
+}
+
+async function getPiCliPath(): Promise<string> {
+  const resolver = (import.meta as ImportMeta & {
+    resolve?: (specifier: string) => string | Promise<string>;
+  }).resolve;
+  if (typeof resolver === "function") {
+    const indexUrl = await resolver("@earendil-works/pi-coding-agent");
+    return join(dirname(fileURLToPath(indexUrl)), "cli.js");
+  }
+
+  return join(
+    process.cwd(),
+    "node_modules",
+    "@earendil-works",
+    "pi-coding-agent",
+    "dist",
+    "cli.js"
+  );
+}
+
+async function exportMarkdown(id: string, filePath: string): Promise<Response> {
+  const { exportContext, fileBaseName } = await getExportContext(id, filePath);
+  const sessionManager = SessionManager.open(filePath);
+  const entries = sessionManager.getEntries() as never;
+  const context = buildSessionContext(entries, sessionManager.getLeafId());
   const markdown = messagesToMarkdown(context.messages, exportContext);
-  const safeName = exportContext.name
-    .replace(/[^a-zA-Z0-9\u4e00-\u9fff_\-. ]/g, "_")
-    .slice(0, 80);
 
   return new Response(markdown, {
     headers: {
       "Content-Type": "text/markdown; charset=utf-8",
-      "Content-Disposition": getAttachmentDisposition(`${safeName}.md`),
+      "Content-Disposition": getAttachmentDisposition(`${fileBaseName}.md`),
       "Cache-Control": "no-cache",
     },
   });
 }
 
-async function exportHtml(filePath: string): Promise<Response> {
+async function exportHtml(id: string, filePath: string): Promise<Response> {
   const cliPath = await getPiCliPath();
   if (!existsSync(cliPath)) {
     return NextResponse.json({ error: "pi CLI not found" }, { status: 500 });
@@ -94,8 +121,8 @@ async function exportHtml(filePath: string): Promise<Response> {
   const tempDir = join(tmpdir(), "pi-web-export");
   mkdirSync(tempDir, { recursive: true });
 
-  const sessionBase = basename(filePath, ".jsonl");
-  const fileName = `pi-session-${sessionBase}.html`;
+  const { fileBaseName } = await getExportContext(id, filePath);
+  const fileName = `${fileBaseName}.html`;
   const outputPath = join(tempDir, `${randomUUID()}.html`);
 
   try {
@@ -138,7 +165,7 @@ export async function GET(
     const format = new URL(req.url).searchParams.get("format");
     return format === "markdown"
       ? exportMarkdown(id, filePath)
-      : exportHtml(filePath);
+      : exportHtml(id, filePath);
   } catch (error) {
     return NextResponse.json({ error: String(error) }, { status: 500 });
   }

@@ -950,19 +950,11 @@ function SessionItem({
   const handleExport = useCallback(async (e: React.MouseEvent) => {
     e.stopPropagation();
     try {
-      const res = await fetch(`/api/sessions/${encodeURIComponent(session.id)}/export?format=markdown`);
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      const blob = await res.blob();
-      const url = URL.createObjectURL(blob);
       const a = document.createElement("a");
-      a.href = url;
-      const disposition = res.headers.get("Content-Disposition") ?? "";
-      const match = disposition.match(/filename\*?=(?:UTF-8''|["']?)([^"';\s]+)/);
-      a.download = match?.[1] ?? `${session.id}.md`;
+      a.href = `/api/sessions/${encodeURIComponent(session.id)}/export?format=markdown`;
       document.body.appendChild(a);
       a.click();
       a.remove();
-      URL.revokeObjectURL(url);
     } catch {
       // ignore
     }
