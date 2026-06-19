@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useCallback, useRef } from "react";
 import { useTranslations } from "next-intl";
+import FetchModelsDialog from "@/components/FetchModelsDialog";
 // Color icons (have their own fill colors — no background needed)
 import AnthropicIcon from "@lobehub/icons/es/Anthropic/components/Mono";
 import OpenAIIcon from "@lobehub/icons/es/OpenAI/components/Mono";
@@ -288,9 +289,10 @@ function SectionTitle({ children }: { children: React.ReactNode }) {
 
 // ── Provider detail ───────────────────────────────────────────────────────────
 
-function ProviderDetail({ name, provider, onChange, onRename, onDelete }: {
+function ProviderDetail({ name, provider, onChange, onRename, onDelete, onRequestFetchModels }: {
   name: string; provider: ProviderEntry;
   onChange: (p: ProviderEntry) => void; onRename: (n: string) => void; onDelete: () => void;
+  onRequestFetchModels: () => void;
 }) {
   const pt = useTranslations("models");
   const [editingName, setEditingName] = useState(name);
@@ -338,6 +340,38 @@ function ProviderDetail({ name, provider, onChange, onRename, onDelete }: {
       <Field label={pt("api")}>
         <Select value={provider.api ?? "openai-completions"} onChange={(v) => set("api", v)} options={API_OPTIONS} required />
       </Field>
+
+      <FetchModelsRow provider={provider} onClick={onRequestFetchModels} />
+    </div>
+  );
+}
+
+// ── Fetch models row (inside ProviderDetail) ──────────────────────────────────
+
+function FetchModelsRow({ provider, onClick }: { provider: ProviderEntry; onClick: () => void }) {
+  const ft = useTranslations("models");
+  const baseUrl = (provider.baseUrl ?? "").trim();
+  const disabled = baseUrl.length === 0;
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 4, marginTop: 4 }}>
+      <button
+        onClick={onClick}
+        disabled={disabled}
+        style={{
+          alignSelf: "flex-start",
+          padding: "6px 12px",
+          border: `1px solid ${disabled ? "var(--border)" : "var(--accent)"}`,
+          borderRadius: 6,
+          background: "none",
+          color: disabled ? "var(--text-dim)" : "var(--accent)",
+          cursor: disabled ? "not-allowed" : "pointer",
+          fontSize: 12,
+          fontWeight: 600,
+        }}
+      >
+        {ft("fetchModels")}
+      </button>
+      {disabled && <span style={{ fontSize: 10, color: "var(--text-dim)" }}>{ft("fetchNoBaseUrl")}</span>}
     </div>
   );
 }
@@ -1289,6 +1323,7 @@ export function ModelsConfig({ onClose }: { onClose: () => void }) {
   const [oauthProviders, setOauthProviders] = useState<OAuthProvider[]>([]);
   const [apiKeyProviders, setApiKeyProviders] = useState<ApiKeyProvider[]>([]);
   const [pickerOpen, setPickerOpen] = useState(false);
+  const [fetchModelsFor, setFetchModelsFor] = useState<string | null>(null);
 
   const loadOAuthProviders = useCallback(() => {
     fetch("/api/auth/providers")
@@ -1373,6 +1408,27 @@ export function ModelsConfig({ onClose }: { onClose: () => void }) {
     });
   }, []);
 
+  const importFetchedModels = useCallback((providerName: string, ids: string[]) => {
+    setConfig((prev) => {
+      const provider = prev.providers?.[providerName] ?? {};
+      const currentModels = provider.models ?? [];
+      const existing = new Set(currentModels.map((m) => m.id));
+      const newModels = ids
+        .map((id) => id.trim())
+        .filter((id) => id && !existing.has(id))
+        .map((id) => ({ id }));
+      if (newModels.length === 0) return prev;
+      return {
+        ...prev,
+        providers: {
+          ...(prev.providers ?? {}),
+          [providerName]: { ...provider, models: [...currentModels, ...newModels] },
+        },
+      };
+    });
+    setSelection({ type: "provider", name: providerName });
+  }, []);
+
   const updateModel = useCallback((providerName: string, index: number, m: ModelEntry) => {
     setConfig((prev) => {
       const provider = prev.providers?.[providerName] ?? {};
@@ -1415,6 +1471,7 @@ export function ModelsConfig({ onClose }: { onClose: () => void }) {
   const providers = Object.entries(config.providers ?? {});
   const activeOAuth = oauthProviders.filter((p) => p.loggedIn);
   const activeApiKey = apiKeyProviders.filter((p) => p.configured);
+  const fetchModelsProvider = fetchModelsFor ? config.providers?.[fetchModelsFor] : undefined;
 
   // Resolve current detail
   const detailContent = (() => {
@@ -1440,6 +1497,7 @@ export function ModelsConfig({ onClose }: { onClose: () => void }) {
           onChange={(p) => updateProvider(selection.name, p)}
           onRename={(n) => renameProvider(selection.name, n)}
           onDelete={() => deleteProvider(selection.name)}
+          onRequestFetchModels={() => setFetchModelsFor(selection.name)}
         />
       );
     }
@@ -1642,6 +1700,15 @@ export function ModelsConfig({ onClose }: { onClose: () => void }) {
         onSelectApiKey={(id) => setSelection({ type: "apikey", providerId: id })}
         onAddCustom={addCustomProvider}
         onClose={() => setPickerOpen(false)}
+      />
+    )}
+    {fetchModelsFor && fetchModelsProvider && (
+      <FetchModelsDialog
+        providerName={fetchModelsFor}
+        provider={fetchModelsProvider}
+        existingModelIds={new Set((fetchModelsProvider.models ?? []).map((m) => m.id))}
+        onImport={(ids) => importFetchedModels(fetchModelsFor, ids)}
+        onClose={() => setFetchModelsFor(null)}
       />
     )}
     </>

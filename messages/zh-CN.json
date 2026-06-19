@@ -187,7 +187,20 @@
     "apiKeySection": "API 密钥",
     "modelCount": "{count} 个模型",
     "hideApiKey": "隐藏 API 密钥",
-    "showApiKey": "显示 API 密钥"
+    "showApiKey": "显示 API 密钥",
+    "fetchModels": "拉取模型",
+    "fetching": "拉取中…",
+    "fetchFailed": "拉取失败",
+    "fetchModelsTitle": "从 {provider} 拉取模型",
+    "fetchModelsDescription": "已找到 {count} 个模型，勾选要导入的模型。已存在的模型不会重复添加。",
+    "fetchSearchPlaceholder": "搜索模型…",
+    "fetchSelectAll": "全选",
+    "fetchSelectNone": "全不选",
+    "fetchImport": "导入选中 ({count})",
+    "fetchAlreadyAdded": "已添加",
+    "fetchEmpty": "供应商未返回模型",
+    "fetchNoBaseUrl": "该提供商未设置 baseUrl，无法自动拉取（仅支持 OpenAI 兼容接口）",
+    "fetchSavePromptToFetch": "请先保存配置或在 API Key 字段填入密钥后再拉取"
   },
   "skills": {
     "title": "技能管理",

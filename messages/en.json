@@ -187,7 +187,20 @@
     "apiKeySection": "API Key",
     "modelCount": "{count} model(s)",
     "hideApiKey": "Hide API key",
-    "showApiKey": "Show API key"
+    "showApiKey": "Show API key",
+    "fetchModels": "Fetch models",
+    "fetching": "Fetching…",
+    "fetchFailed": "Fetch failed",
+    "fetchModelsTitle": "Fetch models from {provider}",
+    "fetchModelsDescription": "Found {count} models. Select which to import. Models already added are skipped.",
+    "fetchSearchPlaceholder": "Search models…",
+    "fetchSelectAll": "Select all",
+    "fetchSelectNone": "Clear",
+    "fetchImport": "Import selected ({count})",
+    "fetchAlreadyAdded": "Already added",
+    "fetchEmpty": "Provider returned no models",
+    "fetchNoBaseUrl": "Provider has no baseUrl. Auto-fetch only supports OpenAI-compatible endpoints.",
+    "fetchSavePromptToFetch": "Save the provider with an API key first, then try fetching."
   },
   "skills": {
     "title": "Skills",
