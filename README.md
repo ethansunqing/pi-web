@@ -1,6 +1,14 @@
 # pi-web
 
-[pi 编程智能体](https://github.com/badlogic/pi-mono) 的网页界面。在浏览器中浏览会话、与智能体对话、分叉对话、切换消息分支。
+[pi 编程智能体](https://github.com/earendil-works/pi) 的网页界面。在浏览器中浏览会话、与智能体对话、分叉对话、切换消息分支。
+
+## 来源与致谢
+
+本仓库是基于 [agegr/pi-web](https://github.com/agegr/pi-web) 的个人二次开发版本，不是从零开始开发的项目。
+
+感谢原作者 [agegr](https://github.com/agegr) 提供的 pi-web 项目和开发思路；本仓库主要是在原项目基础上结合个人使用习惯继续调整、同步上游更新，并补充了一些本地化与模型配置相关能力。
+
+同时感谢 [earendil-works/pi](https://github.com/earendil-works/pi) 项目提供底层 pi coding agent 能力。本项目会尽量保留原项目的设计思路与开源许可说明，后续改动也会在更新日志中记录来源和调整内容。
 
 ## 快速开始
 
