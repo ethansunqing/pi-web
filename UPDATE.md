@@ -1,5 +1,23 @@
 # 更新日志
 
+## 2026-06-19 — v0.6.17
+
+### 升级 pi 依赖到 v0.79.7
+- @earendil-works/pi-ai: 0.79.1 -> 0.79.7
+- @earendil-works/pi-coding-agent: ^0.79.1 -> ^0.79.7
+- npm 在 dedupe `@emnapi/core` 时报 `Invalid Version`，删除 `node_modules` 与 `package-lock.json` 后重新 `npm install` 解决（共安装 1188 个包）。
+- 启动验证：`npm run dev` 在 3000 端口正常启动（Next.js 16.2.1 webpack，Ready in 243ms），`curl http://127.0.0.1:3000/` 与 `/api/models` 均返回 200。
+- 关键运行时版本：next 16.2.1、react 19.2.7、pi-ai/pi-coding-agent 0.79.7。
+
+### Next.js 16 适配 / 端口固定 3000
+- 删除根目录旧 `middleware.ts`，改用 Next.js 16 新约定的 `proxy.ts`（next-intl 中间件）。
+- `next.config.ts`：补 `turbopack.root`、`allowedDevOrigins` 增加 `*.numa`，避免 dev 跨源告警。
+- `package.json`：`dev`/`build` 固定走 webpack，`dev`/`start` 都锁在 3000 端口。
+- `.gitignore` 忽略 `pnpm-lock.yaml`（本项目走 npm，pnpm-lock 不入库）。
+
+### 版本
+- 应用版本 `0.6.16` -> `0.6.17`，对应 git tag `v0.6.17`，作为后续功能改动的回退基线。
+
 ## 2026-06-11
 
 ### 升级 pi 依赖到 v0.79.1

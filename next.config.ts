@@ -14,8 +14,11 @@ try {
 
 const nextConfig: NextConfig = {
   output: "standalone",
+  turbopack: {
+    root: __dirname,
+  },
   serverExternalPackages: ["@earendil-works/pi-coding-agent", "@earendil-works/pi-ai"],
-  allowedDevOrigins: ['192.168.*.*', '127.0.0.1', 'localhost'],
+  allowedDevOrigins: ['192.168.*.*', '127.0.0.1', 'localhost', '*.numa'],
   env: {
     NEXT_PUBLIC_APP_VERSION: version,
     NEXT_PUBLIC_PI_VERSION: piVersion,
