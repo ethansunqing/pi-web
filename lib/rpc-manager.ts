@@ -1,6 +1,7 @@
 import { createAgentSession, SessionManager } from "@earendil-works/pi-coding-agent";
 import { cacheSessionPath } from "./session-reader";
 import type { AgentSessionLike, ToolInfo } from "./pi-types";
+import type { LiveAgentStatus, LiveSessionStats } from "./types";
 
 // ============================================================================
 // Types
@@ -12,6 +13,42 @@ export interface AgentEvent {
 }
 
 type EventListener = (event: AgentEvent) => void;
+
+function normalizeStats(stats: LiveSessionStats): LiveSessionStats {
+  const tokens = stats.tokens ?? { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 };
+  return {
+    tokens: {
+      input: tokens.input ?? 0,
+      output: tokens.output ?? 0,
+      cacheRead: tokens.cacheRead ?? 0,
+      cacheWrite: tokens.cacheWrite ?? 0,
+      total: tokens.total ?? ((tokens.input ?? 0) + (tokens.output ?? 0) + (tokens.cacheRead ?? 0) + (tokens.cacheWrite ?? 0)),
+    },
+    cost: stats.cost ?? 0,
+    userMessages: stats.userMessages ?? 0,
+    assistantMessages: stats.assistantMessages ?? 0,
+    toolCalls: stats.toolCalls ?? 0,
+    toolResults: stats.toolResults ?? 0,
+    totalMessages: stats.totalMessages ?? 0,
+  };
+}
+
+const STATUS_EVENT_TYPES = new Set([
+  "agent_start",
+  "agent_end",
+  "message_end",
+  "tool_execution_start",
+  "tool_execution_end",
+  "compaction_start",
+  "compaction_end",
+  "auto_compaction_start",
+  "auto_compaction_end",
+  "auto_retry_start",
+  "auto_retry_end",
+  "queue_update",
+  "thinking_level_changed",
+  "session_info_changed",
+]);
 
 // ============================================================================
 // AgentSessionWrapper
@@ -39,10 +76,46 @@ export class AgentSessionWrapper {
     return this._alive;
   }
 
+  getLiveStatus(includeStats = true): LiveAgentStatus {
+    const model = this.inner.model;
+    const contextUsage = this.inner.getContextUsage();
+    const rawStats = includeStats ? this.inner.getSessionStats?.() : undefined;
+    const stats = rawStats ? normalizeStats(rawStats) : undefined;
+    const messageCount = stats?.totalMessages ?? this.inner.messages?.length ?? 0;
+
+    return {
+      sessionId: this.inner.sessionId,
+      sessionFile: this.inner.sessionFile ?? "",
+      running: this.inner.isStreaming || this.inner.isCompacting || Boolean(this.inner.isRetrying),
+      isStreaming: this.inner.isStreaming,
+      isCompacting: this.inner.isCompacting,
+      isRetrying: this.inner.isRetrying,
+      retryAttempt: this.inner.retryAttempt,
+      autoCompactionEnabled: this.inner.autoCompactionEnabled,
+      autoRetryEnabled: this.inner.autoRetryEnabled,
+      model: model ? { id: model.id, provider: model.provider, contextWindow: model.contextWindow } : undefined,
+      thinkingLevel: this.inner.agent.state?.thinkingLevel ?? "off",
+      sessionName: this.inner.sessionName,
+      messageCount,
+      pendingMessageCount: this.inner.pendingMessageCount ?? 0,
+      contextUsage: contextUsage
+        ? { percent: contextUsage.percent, contextWindow: contextUsage.contextWindow, tokens: contextUsage.tokens }
+        : null,
+      ...(stats ? { stats } : {}),
+      systemPrompt: this.inner.agent.state?.systemPrompt ?? "",
+      updatedAt: Date.now(),
+    };
+  }
+
   start(): void {
     this.unsubscribe = this.inner.subscribe((event: AgentEvent) => {
       this.resetIdleTimer();
       for (const l of this.listeners) l(event);
+      if (STATUS_EVENT_TYPES.has(event.type)) {
+        const includeStats = event.type !== "tool_execution_start";
+        const status = this.getLiveStatus(includeStats);
+        for (const l of this.listeners) l({ type: "status_update", status });
+      }
     });
     this.resetIdleTimer();
   }
@@ -80,26 +153,11 @@ export class AgentSessionWrapper {
         await this.inner.abort();
         return null;
 
-      case "get_state": {
-        const model = this.inner.model;
-        const contextUsage = this.inner.getContextUsage();
-        return {
-          sessionId: this.inner.sessionId,
-          sessionFile: this.inner.sessionFile ?? "",
-          isStreaming: this.inner.isStreaming,
-          isCompacting: this.inner.isCompacting,
-          autoCompactionEnabled: this.inner.autoCompactionEnabled,
-          autoRetryEnabled: this.inner.autoRetryEnabled,
-          model: model ? { id: model.id, provider: model.provider } : undefined,
-          messageCount: 0,
-          pendingMessageCount: 0,
-          contextUsage: contextUsage
-            ? { percent: contextUsage.percent, contextWindow: contextUsage.contextWindow, tokens: contextUsage.tokens }
-            : null,
-          systemPrompt: this.inner.agent.state?.systemPrompt ?? "",
-          thinkingLevel: this.inner.agent.state?.thinkingLevel ?? "off",
-        };
-      }
+      case "get_state":
+        return this.getLiveStatus();
+
+      case "get_session_stats":
+        return this.inner.getSessionStats?.() ?? null;
 
       case "set_model": {
         const { provider, modelId } = command as { provider: string; modelId: string };

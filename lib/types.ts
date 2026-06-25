@@ -190,14 +190,44 @@ export interface SessionContext {
   model: { provider: string; modelId: string } | null;
 }
 
-// RPC types
-export interface RpcSessionState {
-  model?: { provider: string; id: string; contextWindow?: number };
-  thinkingLevel: string;
+export interface LiveSessionStats {
+  tokens: {
+    input: number;
+    output: number;
+    cacheRead: number;
+    cacheWrite: number;
+    total: number;
+  };
+  cost: number;
+  userMessages: number;
+  assistantMessages: number;
+  toolCalls: number;
+  toolResults: number;
+  totalMessages: number;
+}
+
+export interface LiveAgentStatus {
+  sessionId: string;
+  sessionFile: string;
+  running: boolean;
   isStreaming: boolean;
   isCompacting: boolean;
-  sessionFile?: string;
-  sessionId: string;
+  isRetrying?: boolean;
+  retryAttempt?: number;
+  autoCompactionEnabled: boolean;
+  autoRetryEnabled: boolean;
+  model?: { id: string; provider: string; contextWindow?: number };
+  thinkingLevel: string;
   sessionName?: string;
   messageCount: number;
+  pendingMessageCount: number;
+  contextUsage: { percent: number | null; contextWindow: number; tokens: number | null } | null;
+  stats?: LiveSessionStats;
+  systemPrompt?: string;
+  updatedAt: number;
+}
+
+// RPC types
+export interface RpcSessionState extends LiveAgentStatus {
+  sessionFile: string;
 }

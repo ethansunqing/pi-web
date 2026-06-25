@@ -1,5 +1,52 @@
 # 更新日志
 
+## 2026-06-25 — 未发布：方案 A 增强版
+
+### 参考 jmfederico/pi-web 的轻量增强
+- 对比参考项目 [jmfederico/pi-web](https://github.com/jmfederico/pi-web) 后，本次没有采用 daemon / Fastify / Vite / 远程机器等重架构方案。
+- 继续保留当前项目的轻量 Next.js API Routes + in-process `AgentSessionWrapper` 架构，优先补齐日常本地使用体验。
+- 本次改动定位为“方案 A”：借鉴参考项目的产品化思路，但避免大规模重写。
+
+### 会话侧边栏新增本机 / 项目 / 工作区组织
+- 侧边栏现在按 `Local` / Project / Workspace 组织展示会话。
+- Project 根据会话 `cwd` 的上级目录自动推断，Workspace 对应具体工作目录。
+- 保留原有 `selectedCwd` 过滤逻辑，切换工作区后仍只展示当前工作区下的会话。
+- 新增工作区提示、短会话数量等中英文文案。
+
+### 文件标签页支持工作区上下文
+- 文件 tab 新增 `cwd` 字段，用于记录打开文件时所在的工作区。
+- 跨工作区切换后，已打开文件仍可按原工作区上下文读取，避免同名文件或路径上下文混乱。
+
+### 新增实时会话状态快照
+- RPC 状态现在返回更完整的 live status，包括 streaming、compacting、retry、模型、thinking level、消息数量、上下文使用情况等。
+- SSE 连接建立时会推送初始状态，并在关键 agent lifecycle 事件后推送 `status_update`。
+- 前端 hook 会同步 live status，并优先使用实时 token / cost / tool call 统计。
+- 对高频 `message_update` 事件不做完整 stats 计算，避免额外性能开销。
+
+### 新增健康检查 API
+- 新增 `GET /api/health`。
+- 返回 pi-web、Next.js、`@earendil-works/pi-coding-agent`、`@earendil-works/pi-ai`、Node 版本。
+- 返回 agent 数据目录、sessions 目录、`models.json`、`settings.json` 路径。
+- 提供 Node、构建产物、配置目录、配置文件等只读检查结果。
+
+### CLI 新增诊断命令
+- 本次评估后决定**不在 CLI 层引入诊断命令**（`version` / `doctor` / `status`），保持 `bin/pi-web.js` 与原始启动逻辑一致，避免后续同步上游和远程使用时增加冲突点。
+- 诊断能力统一收敛到 Web 侧的 `GET /api/health`。
+
+### README 与开发脚本更新
+- README 补充健康检查 API、会话组织和实时状态说明。
+- `package.json` 新增 `npm run typecheck`。
+
+### 验证情况
+- `npm run typecheck` 已通过。
+- 本地运行中的 `GET http://localhost:3000/api/health` 返回 `ok: true`。
+- 本地页面已打开验证，3000 端口已有可用服务。
+
+### 已知问题 / 后续优化
+- `npm run lint` 仍会因为既有的 `components/ChatMinimap.tsx` React Hooks memoization 规则问题失败，本次未修改该组件。
+- 工作区选择当前沿用最近 cwd 列表，因此展示的是最近工作区，不是完整历史工作区列表。
+- `app/api/health/route.ts` 中 Node 版本检查后续可改成更严格的数字化版本比较。
+
 ## 2026-06-19 — v0.6.18
 
 ### 自定义供应商支持远程拉取模型

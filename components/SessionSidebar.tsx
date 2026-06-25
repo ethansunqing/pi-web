@@ -58,6 +58,86 @@ function shortenCwd(cwd: string, homeDir?: string): string {
   return "…/" + parts.slice(-2).join(sep);
 }
 
+function normalizePathForDisplay(path: string): string {
+  return path.replace(/\\/g, "/").replace(/\/+$/, "");
+}
+
+function basenamePath(path: string): string {
+  const normalized = normalizePathForDisplay(path);
+  const parts = normalized.split("/").filter(Boolean);
+  return parts[parts.length - 1] ?? normalized;
+}
+
+function dirnamePath(path: string): string {
+  const normalized = normalizePathForDisplay(path);
+  const parts = normalized.split("/").filter(Boolean);
+  if (parts.length <= 1) return normalized;
+  const prefix = normalized.startsWith("/") ? "/" : "";
+  return prefix + parts.slice(0, -1).join("/");
+}
+
+interface WorkspaceSummary {
+  cwd: string;
+  name: string;
+  shortPath: string;
+  projectName: string;
+  projectPath: string;
+  sessionCount: number;
+  modified: string;
+}
+
+interface ProjectGroup {
+  id: string;
+  name: string;
+  path: string;
+  modified: string;
+  workspaces: WorkspaceSummary[];
+}
+
+function buildWorkspaceSummary(cwd: string, sessions: SessionInfo[], homeDir: string): WorkspaceSummary {
+  const matching = sessions.filter((s) => s.cwd === cwd);
+  const modified = matching.reduce((latest, s) => s.modified > latest ? s.modified : latest, "");
+  const projectPath = dirnamePath(cwd);
+  return {
+    cwd,
+    name: basenamePath(cwd) || cwd,
+    shortPath: shortenCwd(cwd, homeDir),
+    projectName: basenamePath(projectPath) || projectPath,
+    projectPath,
+    sessionCount: matching.length,
+    modified,
+  };
+}
+
+function buildWorkspaceGroups(sessions: SessionInfo[], homeDir: string): ProjectGroup[] {
+  const recentCwds = getRecentCwds(sessions);
+  const projects = new Map<string, ProjectGroup>();
+
+  for (const cwd of recentCwds) {
+    const workspace = buildWorkspaceSummary(cwd, sessions, homeDir);
+    const existing = projects.get(workspace.projectPath);
+    if (existing) {
+      existing.workspaces.push(workspace);
+      if (workspace.modified > existing.modified) existing.modified = workspace.modified;
+    } else {
+      projects.set(workspace.projectPath, {
+        id: workspace.projectPath,
+        name: workspace.projectName,
+        path: workspace.projectPath,
+        modified: workspace.modified,
+        workspaces: [workspace],
+      });
+    }
+  }
+
+  return [...projects.values()]
+    .map((project) => ({
+      ...project,
+      workspaces: project.workspaces.sort((a, b) => b.modified.localeCompare(a.modified)),
+    }))
+    .sort((a, b) => b.modified.localeCompare(a.modified));
+}
+
 
 
 interface SessionTreeNode {
@@ -351,7 +431,8 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, onNewSessio
     onNewSession?.(tempId, selectedCwd);
   }, [selectedCwd, onNewSession]);
 
-  const recentCwds = getRecentCwds(allSessions);
+  const workspaceGroups = buildWorkspaceGroups(allSessions, homeDir);
+  const selectedWorkspace = selectedCwd ? buildWorkspaceSummary(selectedCwd, allSessions, homeDir) : null;
   const filteredSessions = selectedCwd
     ? allSessions.filter((s) => s.cwd === selectedCwd)
     : allSessions;
@@ -452,7 +533,7 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, onNewSessio
           </div>
         </div>
 
-        {/* CWD picker */}
+        {/* Workspace picker */}
         <div ref={dropdownRef} style={{ position: "relative" }}>
           <button
             onClick={() => setDropdownOpen((v) => !v)}
@@ -460,31 +541,34 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, onNewSessio
               width: "100%",
               display: "flex",
               alignItems: "center",
-              padding: "6px 10px",
+              gap: 8,
+              padding: "7px 10px",
               background: selectedCwd ? "var(--bg-hover)" : "rgba(37,99,235,0.06)",
               border: selectedCwd ? "1px solid var(--border)" : "1px solid rgba(37,99,235,0.4)",
               borderRadius: 7,
               cursor: "pointer",
-              fontSize: 12,
               color: "var(--text)",
               textAlign: "left",
               transition: "border-color 0.15s, background 0.15s",
             }}
           >
-            <span
-              style={{
-                flex: 1,
-                overflow: "hidden",
-                textOverflow: "ellipsis",
-                whiteSpace: "nowrap",
-                fontFamily: "var(--font-mono)",
-                fontSize: 11,
-                color: selectedCwd ? "var(--text)" : "var(--text-dim)",
-              }}
-              title={selectedCwd ?? ""}
-            >
-              {selectedCwd ? shortenCwd(selectedCwd, homeDir) : (initialSessionId && !restoredRef.current ? "" : t("selectProject"))}
+            <span style={{ width: 18, height: 18, borderRadius: 5, display: "flex", alignItems: "center", justifyContent: "center", background: "var(--bg)", color: "var(--accent)", flexShrink: 0 }}>
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <rect x="3" y="4" width="18" height="14" rx="2" />
+                <path d="M7 8h10M7 12h7" />
+              </svg>
             </span>
+            <span style={{ flex: 1, minWidth: 0 }} title={selectedCwd ?? ""}>
+              <span style={{ display: "block", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", fontSize: 12, fontWeight: 600, color: selectedCwd ? "var(--text)" : "var(--text-dim)" }}>
+                {selectedWorkspace?.name ?? (initialSessionId && !restoredRef.current ? "" : t("selectWorkspace"))}
+              </span>
+              <span style={{ display: "block", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", fontFamily: "var(--font-mono)", fontSize: 10, color: "var(--text-dim)", marginTop: 1 }}>
+                {selectedCwd ? shortenCwd(selectedCwd, homeDir) : t("localMachine")}
+              </span>
+            </span>
+            <svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="var(--text-dim)" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0 }}>
+              <polyline points="3 4.5 6 7.5 9 4.5" />
+            </svg>
           </button>
 
           {dropdownOpen && (
@@ -500,46 +584,76 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, onNewSessio
                 borderRadius: 8,
                 boxShadow: "0 6px 20px rgba(0,0,0,0.10)",
                 overflow: "hidden",
+                maxHeight: "min(460px, 70vh)",
+                overflowY: "auto",
               }}
             >
-              {recentCwds.map((cwd) => (
-                <button
-                  key={cwd}
-                  onClick={() => {
-                    setSelectedCwd(cwd);
-                    setCustomPathOpen(false);
-                    setCustomPathValue("");
-                    setCustomPathError(null);
-                    setDropdownOpen(false);
-                  }}
-                  style={{
-                    display: "flex",
-                    alignItems: "center",
-                    gap: 7,
-                    width: "100%",
-                    padding: "8px 10px",
-                    background: cwd === selectedCwd ? "var(--bg-selected)" : "none",
-                    border: "none",
-                    borderBottom: "1px solid var(--border)",
-                    color: cwd === selectedCwd ? "var(--text)" : "var(--text-muted)",
-                    cursor: "pointer",
-                    textAlign: "left",
-                    fontSize: 11,
-                    fontFamily: "var(--font-mono)",
-                    overflow: "hidden",
-                    textOverflow: "ellipsis",
-                    whiteSpace: "nowrap",
-                  }}
-                  title={cwd}
-                >
-                  {cwd === selectedCwd && (
-                    <svg width="10" height="10" viewBox="0 0 10 10" fill="none" stroke="var(--accent)" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0 }}>
-                      <polyline points="1.5 5 4 7.5 8.5 2.5" />
-                    </svg>
-                  )}
-                  {cwd !== selectedCwd && <span style={{ width: 10, flexShrink: 0 }} />}
-                  <span style={{ flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{shortenCwd(cwd, homeDir)}</span>
-                </button>
+              <div style={{ padding: "8px 10px 6px", borderBottom: "1px solid var(--border)", background: "var(--bg-panel)" }}>
+                <div style={{ display: "flex", alignItems: "center", gap: 6, color: "var(--text)", fontSize: 11, fontWeight: 700 }}>
+                  <span style={{ width: 7, height: 7, borderRadius: 999, background: "var(--accent)", opacity: 0.8 }} />
+                  {t("localMachine")}
+                </div>
+                <div style={{ marginTop: 2, color: "var(--text-dim)", fontSize: 10 }}>
+                  {t("workspaceHint")}
+                </div>
+              </div>
+
+              {workspaceGroups.map((project) => (
+                <div key={project.id}>
+                  <div style={{ padding: "7px 10px 4px", background: "var(--bg)", borderBottom: "1px solid var(--border)" }}>
+                    <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8 }}>
+                      <span style={{ minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", color: "var(--text-muted)", fontSize: 10, fontWeight: 700, letterSpacing: "0.04em", textTransform: "uppercase" }}>
+                        {project.name}
+                      </span>
+                      <span style={{ color: "var(--text-dim)", fontSize: 10, flexShrink: 0 }}>{project.workspaces.length}</span>
+                    </div>
+                  </div>
+                  {project.workspaces.map((workspace) => (
+                    <button
+                      key={workspace.cwd}
+                      onClick={() => {
+                        setSelectedCwd(workspace.cwd);
+                        setCustomPathOpen(false);
+                        setCustomPathValue("");
+                        setCustomPathError(null);
+                        setDropdownOpen(false);
+                      }}
+                      style={{
+                        display: "flex",
+                        alignItems: "center",
+                        gap: 8,
+                        width: "100%",
+                        padding: "8px 10px",
+                        background: workspace.cwd === selectedCwd ? "var(--bg-selected)" : "none",
+                        border: "none",
+                        borderBottom: "1px solid var(--border)",
+                        color: workspace.cwd === selectedCwd ? "var(--text)" : "var(--text-muted)",
+                        cursor: "pointer",
+                        textAlign: "left",
+                      }}
+                      title={workspace.cwd}
+                    >
+                      {workspace.cwd === selectedCwd ? (
+                        <svg width="11" height="11" viewBox="0 0 10 10" fill="none" stroke="var(--accent)" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0 }}>
+                          <polyline points="1.5 5 4 7.5 8.5 2.5" />
+                        </svg>
+                      ) : (
+                        <span style={{ width: 11, flexShrink: 0 }} />
+                      )}
+                      <span style={{ flex: 1, minWidth: 0 }}>
+                        <span style={{ display: "block", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", fontSize: 12, fontWeight: workspace.cwd === selectedCwd ? 600 : 500 }}>
+                          {workspace.name}
+                        </span>
+                        <span style={{ display: "block", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", fontFamily: "var(--font-mono)", fontSize: 10, color: "var(--text-dim)", marginTop: 1 }}>
+                          {workspace.shortPath}
+                        </span>
+                      </span>
+                      <span style={{ flexShrink: 0, color: "var(--text-dim)", fontSize: 10 }}>
+                        {workspace.sessionCount} {t("sessionsShort")}
+                      </span>
+                    </button>
+                  ))}
+                </div>
               ))}
 
               {/* Default cwd shortcut */}
@@ -554,7 +668,7 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, onNewSessio
                     padding: "8px 10px",
                     background: "none",
                     border: "none",
-                    borderTop: recentCwds.length > 0 ? "1px solid var(--border)" : "none",
+                    borderTop: workspaceGroups.length > 0 ? "1px solid var(--border)" : "none",
                     color: "var(--text-muted)",
                     cursor: "pointer",
                     textAlign: "left",
@@ -598,7 +712,7 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, onNewSessio
                   <span>{t("customPath")}</span>
                 </button>
               ) : (
-                <div style={{ padding: "6px 8px", borderTop: recentCwds.length > 0 ? "none" : undefined }}>
+                <div style={{ padding: "6px 8px", borderTop: workspaceGroups.length > 0 ? "none" : undefined }}>
                   <input
                     ref={customPathInputRef}
                     value={customPathValue}
@@ -682,6 +796,25 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, onNewSessio
             </div>
           )}
         </div>
+
+        {selectedWorkspace && (
+          <div style={{
+            display: "flex",
+            alignItems: "center",
+            gap: 5,
+            marginTop: 8,
+            padding: "0 2px",
+            color: "var(--text-dim)",
+            fontSize: 10,
+            minWidth: 0,
+          }}>
+            <span style={{ flexShrink: 0 }}>{t("localMachine")}</span>
+            <span style={{ color: "var(--border)", flexShrink: 0 }}>/</span>
+            <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{selectedWorkspace.projectName}</span>
+            <span style={{ color: "var(--border)", flexShrink: 0 }}>/</span>
+            <span style={{ color: "var(--text-muted)", fontWeight: 600, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{selectedWorkspace.name}</span>
+          </div>
+        )}
       </div>
 
       {/* Session list */}

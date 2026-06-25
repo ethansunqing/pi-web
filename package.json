@@ -21,6 +21,7 @@
     "build": "next build --webpack",
     "start": "next start -p 3000",
     "lint": "eslint .",
+    "typecheck": "tsc --noEmit",
     "release": "npm version patch --no-git-tag-version && npm run build && npm publish --access public"
   },
   "dependencies": {

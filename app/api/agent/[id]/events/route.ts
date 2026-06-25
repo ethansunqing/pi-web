@@ -33,8 +33,8 @@ export async function GET(
         controller.enqueue(new TextEncoder().encode(text));
       };
 
-      // Send initial connected event
-      encode({ type: "connected", sessionId: id });
+      // Send initial connected event with a live snapshot so reconnects restore state immediately.
+      encode({ type: "connected", sessionId: id, status: session.getLiveStatus() });
 
       const unsubscribe = session.onEvent((event) => {
         encode(event);
@@ -53,7 +53,11 @@ export async function GET(
       const cleanup = () => {
         clearInterval(heartbeat);
         unsubscribe();
-        controller.close();
+        try {
+          controller.close();
+        } catch {
+          // controller already closed
+        }
       };
 
       // Detect client disconnect via abort signal

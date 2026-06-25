@@ -1,4 +1,5 @@
 import type { SessionManager, SettingsManager, AgentSessionEvent } from "@earendil-works/pi-coding-agent";
+import type { LiveSessionStats } from "./types";
 
 export interface ContextUsage {
   percent: number | null;
@@ -9,7 +10,14 @@ export interface ContextUsage {
 export interface ModelLike {
   id: string;
   provider: string;
+  contextWindow?: number;
 }
+
+type UpstreamSessionStats = LiveSessionStats & {
+  sessionFile?: string;
+  sessionId?: string;
+  contextUsage?: ContextUsage | null;
+};
 
 export interface ToolInfo {
   name: string;
@@ -29,6 +37,11 @@ export interface AgentSessionLike {
   readonly isCompacting: boolean;
   readonly autoCompactionEnabled: boolean;
   readonly autoRetryEnabled: boolean;
+  readonly isRetrying?: boolean;
+  readonly retryAttempt?: number;
+  readonly pendingMessageCount?: number;
+  readonly sessionName?: string;
+  readonly messages?: unknown[];
   readonly model: ModelLike | undefined;
   readonly modelRegistry: { find: (provider: string, modelId: string) => ModelLike | undefined };
   readonly sessionManager: SessionManager;
@@ -51,4 +64,5 @@ export interface AgentSessionLike {
   setActiveToolsByName(names: string[]): void;
   abortCompaction(): void;
   getContextUsage(): ContextUsage | undefined;
+  getSessionStats?(): UpstreamSessionStats;
 }
