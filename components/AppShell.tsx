@@ -217,11 +217,11 @@ export function AppShell() {
     const tabId = `file:${filePath}`;
     setFileTabs((prev) => {
       if (prev.find((t) => t.id === tabId)) return prev;
-      return [...prev, { id: tabId, label: fileName, filePath }];
+      return [...prev, { id: tabId, label: fileName, filePath, cwd: activeCwd ?? undefined }];
     });
     setActiveFileTabId(tabId);
     setRightPanelOpen(true);
-  }, []);
+  }, [activeCwd]);
 
   const handleCloseFileTab = useCallback((tabId: string) => {
     setFileTabs((prev) => {
@@ -756,7 +756,7 @@ export function AppShell() {
         {/* File content */}
         <div style={{ flex: 1, overflow: "hidden" }}>
           {activeFileTab?.filePath ? (
-            <FileViewer filePath={activeFileTab.filePath} cwd={activeCwd ?? undefined} />
+            <FileViewer filePath={activeFileTab.filePath} cwd={activeFileTab.cwd ?? activeCwd ?? undefined} />
           ) : (
             <div style={{ height: "100%", display: "flex", alignItems: "center", justifyContent: "center", color: "var(--text-dim)", fontSize: 12 }}>
               {sh("noFileOpen")}
