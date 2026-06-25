@@ -1,6 +1,6 @@
 # 更新日志
 
-## 2026-06-25 — 未发布：方案 A 增强版
+## 2026-06-25 — v0.6.19（方案 A 增强版）
 
 ### 参考 jmfederico/pi-web 的轻量增强
 - 对比参考项目 [jmfederico/pi-web](https://github.com/jmfederico/pi-web) 后，本次没有采用 daemon / Fastify / Vite / 远程机器等重架构方案。
