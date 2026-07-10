@@ -9,6 +9,7 @@ export interface Tab {
   label: string;
   filePath: string;
   cwd?: string;
+  sourceSessionId?: string | null;
 }
 
 interface Props {

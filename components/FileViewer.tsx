@@ -13,6 +13,7 @@ import { encodeFilePathForApi, getFileName, getRelativeFilePath } from "@/lib/fi
 interface Props {
   filePath: string;
   cwd?: string;
+  sourceSessionId?: string | null;
 }
 
 interface FileData {
@@ -46,11 +47,25 @@ function isDocumentPreviewPath(filePath: string): boolean {
   return DOCUMENT_PREVIEW_EXTS.has(getFileExt(filePath));
 }
 
-function DownloadLink({ filePath, label = "Download" }: { filePath: string; label?: string }) {
+function getFileApiUrl(
+  filePath: string,
+  type: "read" | "download" | "meta" | "preview" | "watch",
+  sourceSessionId?: string | null,
+  params: Record<string, string | number | undefined> = {},
+): string {
   const encoded = encodeFilePathForApi(filePath);
+  const searchParams = new URLSearchParams({ type });
+  if (sourceSessionId) searchParams.set("sessionId", sourceSessionId);
+  for (const [key, value] of Object.entries(params)) {
+    if (value !== undefined) searchParams.set(key, String(value));
+  }
+  return `/api/files/${encoded}?${searchParams.toString()}`;
+}
+
+function DownloadLink({ filePath, label = "Download", sourceSessionId }: { filePath: string; label?: string; sourceSessionId?: string | null }) {
   return (
     <a
-      href={`/api/files/${encoded}?type=read`}
+      href={getFileApiUrl(filePath, "download", sourceSessionId)}
       download={getFileName(filePath)}
       style={{
         color: "var(--text-muted)",
@@ -305,7 +320,7 @@ function DiffView({ oldContent, newContent }: { oldContent: string; newContent: 
   );
 }
 
-function ImageViewer({ filePath, cwd }: { filePath: string; cwd?: string }) {
+function ImageViewer({ filePath, cwd, sourceSessionId }: Props) {
   const fvi = useTranslations("files");
   const [watching, setWatching] = useState(false);
   const [bust, setBust] = useState(0);
@@ -328,8 +343,7 @@ function ImageViewer({ filePath, cwd }: { filePath: string; cwd?: string }) {
       esRef.current = null;
     }
 
-    const encoded = encodeFilePathForApi(filePath);
-    const es = new EventSource(`/api/files/${encoded}?type=watch`);
+    const es = new EventSource(getFileApiUrl(filePath, "watch", sourceSessionId));
     esRef.current = es;
 
     es.addEventListener("connected", () => setWatching(true));
@@ -347,10 +361,9 @@ function ImageViewer({ filePath, cwd }: { filePath: string; cwd?: string }) {
       es.close();
       esRef.current = null;
     };
-  }, [filePath]);
+  }, [filePath, sourceSessionId]);
 
-  const encoded = encodeFilePathForApi(filePath);
-  const src = `/api/files/${encoded}?type=read${bust ? `&v=${bust}` : ""}`;
+  const src = getFileApiUrl(filePath, "read", sourceSessionId, bust ? { v: bust } : undefined);
 
   const formatSizeStr = size != null ? formatSize(size) : null;
 
@@ -440,7 +453,7 @@ function formatDuration(seconds: number): string {
   return `${mins}:${String(secs).padStart(2, "0")}`;
 }
 
-function AudioViewer({ filePath, cwd }: { filePath: string; cwd?: string }) {
+function AudioViewer({ filePath, cwd, sourceSessionId }: Props) {
   const fva = useTranslations("files");
   const [watching, setWatching] = useState(false);
   const [bust, setBust] = useState(0);
@@ -463,8 +476,7 @@ function AudioViewer({ filePath, cwd }: { filePath: string; cwd?: string }) {
       esRef.current = null;
     }
 
-    const encoded = encodeFilePathForApi(filePath);
-    const es = new EventSource(`/api/files/${encoded}?type=watch`);
+    const es = new EventSource(getFileApiUrl(filePath, "watch", sourceSessionId));
     esRef.current = es;
 
     es.addEventListener("connected", () => setWatching(true));
@@ -484,10 +496,9 @@ function AudioViewer({ filePath, cwd }: { filePath: string; cwd?: string }) {
       es.close();
       esRef.current = null;
     };
-  }, [filePath]);
+  }, [filePath, sourceSessionId]);
 
-  const encoded = encodeFilePathForApi(filePath);
-  const src = `/api/files/${encoded}?type=read${bust ? `&v=${bust}` : ""}`;
+  const src = getFileApiUrl(filePath, "read", sourceSessionId, bust ? { v: bust } : undefined);
 
   return (
     <div style={{ display: "flex", flexDirection: "column", height: "100%", overflow: "hidden" }}>
@@ -558,7 +569,7 @@ function AudioViewer({ filePath, cwd }: { filePath: string; cwd?: string }) {
   );
 }
 
-function DocumentViewer({ filePath, cwd }: { filePath: string; cwd?: string }) {
+function DocumentViewer({ filePath, cwd, sourceSessionId }: Props) {
   const fvdoc = useTranslations("files");
   const [watching, setWatching] = useState(false);
   const [bust, setBust] = useState(0);
@@ -567,11 +578,10 @@ function DocumentViewer({ filePath, cwd }: { filePath: string; cwd?: string }) {
   const esRef = useRef<EventSource | null>(null);
 
   const ext = getFileExt(filePath);
-  const encoded = encodeFilePathForApi(filePath);
   const isPdf = ext === "pdf";
   const previewUrl = isPdf
-    ? `/api/files/${encoded}?type=read${bust ? `&v=${bust}` : ""}`
-    : `/api/files/${encoded}?type=preview${bust ? `&v=${bust}` : ""}`;
+    ? getFileApiUrl(filePath, "read", sourceSessionId, bust ? { v: bust } : undefined)
+    : getFileApiUrl(filePath, "preview", sourceSessionId, bust ? { v: bust } : undefined);
 
   useEffect(() => {
     setBust(0);
@@ -584,7 +594,7 @@ function DocumentViewer({ filePath, cwd }: { filePath: string; cwd?: string }) {
       esRef.current = null;
     }
 
-    fetch(`/api/files/${encoded}?type=meta`)
+    fetch(getFileApiUrl(filePath, "meta", sourceSessionId))
       .then((r) => r.json())
       .then((d: { size?: number; error?: string }) => {
         if (d.error) setError(d.error);
@@ -597,7 +607,7 @@ function DocumentViewer({ filePath, cwd }: { filePath: string; cwd?: string }) {
       })
       .catch((e) => setError(String(e)));
 
-    const es = new EventSource(`/api/files/${encoded}?type=watch`);
+    const es = new EventSource(getFileApiUrl(filePath, "watch", sourceSessionId));
     esRef.current = es;
 
     es.addEventListener("connected", () => setWatching(true));
@@ -622,7 +632,7 @@ function DocumentViewer({ filePath, cwd }: { filePath: string; cwd?: string }) {
       es.close();
       esRef.current = null;
     };
-  }, [encoded, isPdf]);
+  }, [filePath, isPdf, sourceSessionId]);
 
   return (
     <div style={{ display: "flex", flexDirection: "column", height: "100%", overflow: "hidden" }}>
@@ -644,7 +654,7 @@ function DocumentViewer({ filePath, cwd }: { filePath: string; cwd?: string }) {
         </span>
         <span style={{ marginLeft: "auto" }}>{ext === "docx" ? "docx preview" : "pdf"}</span>
         {size != null && <span>{formatSize(size)}</span>}
-        <DownloadLink filePath={filePath} />
+        <DownloadLink filePath={filePath} sourceSessionId={sourceSessionId} />
         <span
           title={watching ? fvdoc("liveSyncActive") : fvdoc("notWatching")}
           style={{ display: "flex", alignItems: "center", gap: 4, color: watching ? "#4ade80" : "var(--text-dim)", flexShrink: 0 }}
@@ -681,20 +691,20 @@ function DocumentViewer({ filePath, cwd }: { filePath: string; cwd?: string }) {
   );
 }
 
-export function FileViewer({ filePath, cwd }: Props) {
+export function FileViewer({ filePath, cwd, sourceSessionId }: Props) {
   if (isImagePath(filePath)) {
-    return <ImageViewer filePath={filePath} cwd={cwd} />;
+    return <ImageViewer filePath={filePath} cwd={cwd} sourceSessionId={sourceSessionId} />;
   }
   if (isAudioPath(filePath)) {
-    return <AudioViewer filePath={filePath} cwd={cwd} />;
+    return <AudioViewer filePath={filePath} cwd={cwd} sourceSessionId={sourceSessionId} />;
   }
   if (isDocumentPreviewPath(filePath)) {
-    return <DocumentViewer filePath={filePath} cwd={cwd} />;
+    return <DocumentViewer filePath={filePath} cwd={cwd} sourceSessionId={sourceSessionId} />;
   }
-  return <TextFileViewer filePath={filePath} cwd={cwd} />;
+  return <TextFileViewer filePath={filePath} cwd={cwd} sourceSessionId={sourceSessionId} />;
 }
 
-function TextFileViewer({ filePath, cwd }: Props) {
+function TextFileViewer({ filePath, cwd, sourceSessionId }: Props) {
   const fvt = useTranslations("files");
   const { isDark } = useTheme();
   const [data, setData] = useState<FileData | null>(null);
@@ -709,8 +719,7 @@ function TextFileViewer({ filePath, cwd }: Props) {
   const esRef = useRef<EventSource | null>(null);
 
   const fetchContent = useCallback((filePath: string, isRefresh = false) => {
-    const encoded = encodeFilePathForApi(filePath);
-    return fetch(`/api/files/${encoded}?type=read`)
+    return fetch(getFileApiUrl(filePath, "read", sourceSessionId))
       .then((r) => r.json())
       .then((d: FileData & { error?: string }) => {
         if (d.error) {
@@ -732,7 +741,7 @@ function TextFileViewer({ filePath, cwd }: Props) {
         setError(String(e));
         return null;
       });
-  }, []);
+  }, [sourceSessionId]);
 
   // Initial load + SSE watch setup
   useEffect(() => {
@@ -756,8 +765,7 @@ function TextFileViewer({ filePath, cwd }: Props) {
     }).finally(() => setLoading(false));
 
     // Set up SSE watch
-    const encoded = encodeFilePathForApi(filePath);
-    const es = new EventSource(`/api/files/${encoded}?type=watch`);
+    const es = new EventSource(getFileApiUrl(filePath, "watch", sourceSessionId));
     esRef.current = es;
 
     es.addEventListener("connected", () => {
@@ -780,7 +788,7 @@ function TextFileViewer({ filePath, cwd }: Props) {
       es.close();
       esRef.current = null;
     };
-  }, [filePath, fetchContent]);
+  }, [filePath, fetchContent, sourceSessionId]);
 
   if (loading) {
     return (
