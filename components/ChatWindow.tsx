@@ -142,7 +142,7 @@ export function ChatWindow({ session, newSessionCwd, onAgentEnd, onSessionCreate
 
   const { isDragOver, handleDragEnter, handleDragOver, handleDragLeave, handleDrop } = useDragDrop(onDrop);
 
-  const visibleMessages = messages.filter((m) => m.role === "user" || m.role === "assistant");
+  const visibleMessages = messages.filter((m) => m.role === "user" || m.role === "assistant" || (m.role === "custom" && m.display !== false));
   const messageRefs = useMessageRefs(visibleMessages.length);
 
   const isEmptyNew = isNew && messages.length === 0 && !streamState.isStreaming && !agentRunning;
@@ -297,7 +297,7 @@ export function ChatWindow({ session, newSessionCwd, onAgentEnd, onSessionCreate
                   msg.role === "user" && idx > 0 && messages[idx - 1].role === "assistant"
                     ? entryIds[idx - 1]
                     : undefined;
-                const isVisible = msg.role === "user" || msg.role === "assistant";
+                const isVisible = msg.role === "user" || msg.role === "assistant" || (msg.role === "custom" && msg.display !== false);
                 const currentRefIdx = isVisible ? refIdx++ : -1;
                 let showTimestamp = false;
                 if (msg.role === "assistant") {
