@@ -49,6 +49,22 @@ interface AgentEvent {
   [key: string]: unknown;
 }
 
+const EVENT_STREAM_CONNECT_TIMEOUT_MS = 5_000;
+const AGENT_STATE_RECONCILE_MS = 15_000;
+
+type EventStreamConnectionStatus = "connected" | "timeout" | "closed";
+interface EventStreamConnectionResult {
+  status: EventStreamConnectionStatus;
+  source: EventSource | null;
+}
+
+class EventStreamConnectionError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "EventStreamConnectionError";
+  }
+}
+
 export type AgentPhase =
   | { kind: "waiting_model" }
   | { kind: "running_tools"; tools: { id: string; name: string }[] }
@@ -119,6 +135,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
   const eventSourceRef = useRef<EventSource | null>(null);
   const sessionIdRef = useRef<string | null>(session?.id ?? null);
   const agentRunningRef = useRef(false);
+  const promptRunIdRef = useRef<number | undefined>(undefined);
   const handleAgentEventRef = useRef<((event: AgentEvent) => void) | null>(null);
   const initialScrollDoneRef = useRef(false);
   const lastUserMsgRef = useRef<HTMLDivElement | null>(null);
@@ -237,35 +254,107 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
     }
   }, [setToolPresetState]);
 
-  const connectEvents = useCallback((sid: string) => {
+  const connectEvents = useCallback((sid: string): Promise<EventStreamConnectionResult> => {
     if (eventSourceRef.current) {
       eventSourceRef.current.close();
       eventSourceRef.current = null;
     }
     const es = new EventSource(`/api/agent/${encodeURIComponent(sid)}/events`);
     eventSourceRef.current = es;
-    es.onmessage = (e) => {
-      try {
-        const event = JSON.parse(e.data) as AgentEvent;
-        handleAgentEventRef.current?.(event);
-      } catch {
-        // ignore
-      }
-    };
-    es.onerror = () => {
-      if (eventSourceRef.current === es && agentRunningRef.current) {
-        es.close();
-        eventSourceRef.current = null;
-        setTimeout(() => {
-          if (agentRunningRef.current) connectEvents(sid);
-        }, 1000);
-      }
-    };
+
+    let settled = false;
+    return new Promise<EventStreamConnectionResult>((resolve) => {
+      const settle = (status: EventStreamConnectionStatus) => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
+        resolve({ status, source: es });
+      };
+      const timer = setTimeout(() => settle("timeout"), EVENT_STREAM_CONNECT_TIMEOUT_MS);
+
+      es.onmessage = (e) => {
+        try {
+          const event = JSON.parse(e.data) as AgentEvent;
+          // The first event is "connected" - settle the promise AND dispatch.
+          if (!settled && event.type === "connected") {
+            settle("connected");
+          }
+          handleAgentEventRef.current?.(event);
+        } catch {
+          // ignore
+        }
+      };
+      es.onerror = () => {
+        // Only act on fatal errors (CLOSED: 404/500/content-type mismatch).
+        // For recoverable errors (CONNECTING) let EventSource auto-reconnect
+        // so events emitted during the reconnect gap are not lost.
+        if (es.readyState === EventSource.CLOSED) {
+          if (eventSourceRef.current === es) {
+            eventSourceRef.current = null;
+          }
+          settle("closed");
+          // Manually reconnect for running sessions after a fatal error.
+          if (agentRunningRef.current) {
+            setTimeout(() => {
+              if (agentRunningRef.current) connectEvents(sid);
+            }, 1000);
+          }
+        }
+      };
+    });
   }, []);
+
+  const ensureEventsConnected = useCallback(async (sid: string): Promise<void> => {
+    const { status, source } = await connectEvents(sid);
+    if (status !== "connected" || !source || source.readyState !== EventSource.OPEN) {
+      if (source) {
+        source.close();
+        if (eventSourceRef.current === source) eventSourceRef.current = null;
+      }
+      throw new EventStreamConnectionError(
+        status === "timeout"
+          ? "Timed out connecting to the agent event stream."
+          : "Failed to connect to the agent event stream."
+      );
+    }
+  }, [connectEvents]);
 
   useEffect(() => {
     agentRunningRef.current = agentRunning;
   }, [agentRunning]);
+
+  const finishPromptWithoutStream = useCallback((sid: string, runId?: number) => {
+    if (runId !== undefined && promptRunIdRef.current !== runId) return;
+    setAgentRunning(false);
+    setAgentPhase(null);
+    setRetryInfo(null);
+    dispatch({ type: "end" });
+    loadSession(sid).catch(() => {});
+    fetch(`/api/agent/${encodeURIComponent(sid)}`)
+      .then((r) => r.json())
+      .then((d: { state?: LiveAgentStatus }) => {
+        applyLiveStatus(d.state);
+      })
+      .catch(() => {});
+    onAgentEnd?.();
+  }, [loadSession, applyLiveStatus, onAgentEnd]);
+
+  const reconcileAgentState = useCallback(async (sid: string) => {
+    try {
+      const res = await fetch(`/api/agent/${encodeURIComponent(sid)}`);
+      if (!res.ok) return;
+      const d = (await res.json()) as { running?: boolean; state?: LiveAgentStatus };
+      applyLiveStatus(d.state);
+      const busy = d.state?.isStreaming || d.state?.isCompacting || Boolean(d.state?.isRetrying);
+      if (!busy && agentRunningRef.current) {
+        // Server reports idle while client still thinks it's running - a
+        // missed agent_end. Recover by finalizing the prompt locally.
+        finishPromptWithoutStream(sid, promptRunIdRef.current);
+      }
+    } catch {
+      // ignore - periodic reconciliation is best-effort
+    }
+  }, [applyLiveStatus, finishPromptWithoutStream]);
 
   const handleAgentEvent = useCallback((event: AgentEvent) => {
     switch (event.type) {
@@ -281,23 +370,12 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
         dispatch({ type: "start" });
         break;
       case "agent_end":
-        setAgentRunning(false);
-        setAgentPhase(null);
-        setRetryInfo(null);
-        dispatch({ type: "end" });
-        if (sessionIdRef.current) {
-          loadSession(sessionIdRef.current);
-          fetch(`/api/agent/${encodeURIComponent(sessionIdRef.current)}`)
-            .then((r) => r.json())
-            .then((d: { state?: LiveAgentStatus }) => {
-              applyLiveStatus(d.state);
-            })
-            .catch(() => {});
-        }
-        onAgentEnd?.();
+        if (!agentRunningRef.current) break;
+        finishPromptWithoutStream(sessionIdRef.current ?? "", promptRunIdRef.current);
         break;
       case "message_start":
       case "message_update": {
+        if (!agentRunningRef.current) break;
         const msg = event.message as Partial<AgentMessage> | undefined;
         if (msg?.role === "user") {
           break;
@@ -309,6 +387,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
         break;
       }
       case "message_end": {
+        if (!agentRunningRef.current) break;
         const completed = event.message as AgentMessage | undefined;
         if (completed && completed.role !== "user") {
           setMessages((prev) => [...prev, normalizeToolCalls(completed)]);
@@ -358,12 +437,35 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
         }
         break;
     }
-  }, [loadSession, onAgentEnd, applyLiveStatus]);
+  }, [finishPromptWithoutStream, applyLiveStatus, loadSession]);
   handleAgentEventRef.current = handleAgentEvent;
+
+  // Reconcile agent state to recover from missed SSE events: periodically,
+  // when the tab returns to the foreground, and when the network comes back.
+  useEffect(() => {
+    if (!agentRunning) return;
+    const sid = sessionIdRef.current;
+    if (!sid) return;
+    const interval = setInterval(() => reconcileAgentState(sid), AGENT_STATE_RECONCILE_MS);
+    const onVisible = () => {
+      if (document.visibilityState === "visible") reconcileAgentState(sid);
+    };
+    const onOnline = () => reconcileAgentState(sid);
+    document.addEventListener("visibilitychange", onVisible);
+    window.addEventListener("online", onOnline);
+    return () => {
+      clearInterval(interval);
+      document.removeEventListener("visibilitychange", onVisible);
+      window.removeEventListener("online", onOnline);
+    };
+  }, [agentRunning, reconcileAgentState]);
 
   const handleSend = useCallback(async (message: string, images?: AttachedImage[]) => {
     if (!message.trim() && !images?.length) return;
     if (agentRunning) return;
+
+    const runId = (promptRunIdRef.current ?? 0) + 1;
+    promptRunIdRef.current = runId;
 
     const imageBlocks = images?.map((img) => ({ type: "image" as const, source: { type: "base64" as const, media_type: img.mimeType, data: img.data } }));
     const userMsg: AgentMessage = {
@@ -404,7 +506,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
         const result = await res.json() as { sessionId: string };
         const realId = result.sessionId;
         sessionIdRef.current = realId;
-        connectEvents(realId);
+        await ensureEventsConnected(realId);
         onSessionCreated?.({
           id: realId,
           path: "",
@@ -416,7 +518,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
           firstMessage: message,
         });
       } else if (session) {
-        connectEvents(session.id);
+        await ensureEventsConnected(session.id);
         await sendAgentCommand(session.id, {
           type: "prompt",
           message,
@@ -425,11 +527,19 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
       }
     } catch (e) {
       console.error("Failed to send message:", e);
-      setAgentRunning(false);
-      setAgentPhase(null);
-      dispatch({ type: "end" });
+      // Roll back the optimistic user message we just appended.
+      if (promptRunIdRef.current === runId) {
+        setMessages((prev) => {
+          if (prev[prev.length - 1] === userMsg) return prev.slice(0, -1);
+          return prev.filter((m) => m !== userMsg);
+        });
+      }
+      if (e instanceof EventStreamConnectionError) {
+        setError(e.message);
+      }
+      finishPromptWithoutStream(sessionIdRef.current ?? "", runId);
     }
-  }, [isNew, newSessionCwd, newSessionModel, toolPreset, thinkingLevel, session, agentRunning, connectEvents, onSessionCreated]);
+  }, [isNew, newSessionCwd, newSessionModel, toolPreset, thinkingLevel, session, agentRunning, ensureEventsConnected, onSessionCreated, finishPromptWithoutStream]);
 
   const handleAbort = useCallback(async () => {
     const sid = sessionIdRef.current;
