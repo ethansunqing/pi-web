@@ -22,7 +22,9 @@ import VercelIcon from "@lobehub/icons/es/Vercel/components/Mono";
 import GithubCopilotIcon from "@lobehub/icons/es/GithubCopilot/components/Mono";
 import AwsColorIcon from "@lobehub/icons/es/Aws/components/Color";
 import AzureColorIcon from "@lobehub/icons/es/Azure/components/Color";
-import KimiColorIcon from "@lobehub/icons/es/Kimi/components/Color";
+// Kimi icon removed: @lobehub/icons@5.10.0 has no Kimi subpackage.
+// Reuse Moonshot (same vendor — Moonshot AI / 月之暗面) Mono icon as the fallback.
+const KimiColorIcon = MoonshotIcon;
 import QwenColorIcon from "@lobehub/icons/es/Qwen/components/Color";
 import ZhipuColorIcon from "@lobehub/icons/es/Zhipu/components/Color";
 import CohereColorIcon from "@lobehub/icons/es/Cohere/components/Color";
