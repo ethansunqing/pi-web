@@ -3,11 +3,13 @@
 import { useState, useRef, useEffect, useMemo } from "react";
 import { useTranslations } from "next-intl";
 import { MarkdownBody } from "./MarkdownBody";
+import { parseCompactionSummary } from "@/lib/compaction-summary";
 import type {
   AgentMessage,
   UserMessage,
   AssistantMessage,
   ToolResultMessage,
+  CustomMessage,
   AssistantContentBlock,
   TextContent,
   ImageContent,
@@ -70,10 +72,95 @@ export function MessageView({ message, isStreaming, toolResults, modelNames, ent
     return <AssistantMessageView message={message as AssistantMessage} isStreaming={isStreaming} toolResults={toolResults} modelNames={modelNames} showTimestamp={showTimestamp} prevTimestamp={prevTimestamp} />;
   }
   if (message.role === "toolResult") {
-    // Rendered inline under its toolCall — skip standalone rendering if paired
+    // Rendered inline under its toolCall - skip standalone rendering if paired
+    return null;
+  }
+  if (message.role === "custom") {
+    if (message.customType === "compaction") {
+      return <CompactionMessageView message={message} />;
+    }
     return null;
   }
   return null;
+}
+
+function CompactionMessageView({ message }: { message: CustomMessage }) {
+  const t = useTranslations("chat");
+  const [showFiles, setShowFiles] = useState(false);
+  const summaryText = typeof message.content === "string" ? message.content : "";
+  const parsed = useMemo(() => parseCompactionSummary(summaryText), [summaryText]);
+  const details = message.details as { tokensBefore?: number; firstKeptEntryId?: string } | undefined;
+  const hasFiles = parsed.readFiles.length > 0 || parsed.modifiedFiles.length > 0;
+
+  return (
+    <div
+      className="markdown-compaction-message"
+      style={{
+        margin: "12px 0",
+        padding: "12px 14px",
+        border: "1px solid var(--border)",
+        borderRadius: 8,
+        background: "var(--bg-panel)",
+        fontSize: 13,
+      }}
+    >
+      <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 8 }}>
+        <span style={{ fontSize: 14, fontWeight: 600, color: "var(--text-muted)" }}>
+          {t("compactionTitle") ?? "Conversation compacted"}
+        </span>
+        {typeof details?.tokensBefore === "number" && (
+          <span style={{ fontSize: 11, color: "var(--text-dim)" }}>
+            · {details.tokensBefore.toLocaleString()} {t("compactionTokens")}
+          </span>
+        )}
+      </div>
+      {parsed.body && (
+        <div className="compaction-summary" style={{ color: "var(--text-muted)" }}>
+          <MarkdownBody>{parsed.body}</MarkdownBody>
+        </div>
+      )}
+      {hasFiles && (
+        <div style={{ marginTop: 8 }}>
+          <button
+            onClick={() => setShowFiles((v) => !v)}
+            style={{
+              background: "none",
+              border: "none",
+              color: "var(--text-dim)",
+              cursor: "pointer",
+              fontSize: 11,
+              padding: 0,
+            }}
+          >
+            {showFiles ? "▾" : "▸"} {parsed.readFiles.length + parsed.modifiedFiles.length} {t("compactionFiles")}
+          </button>
+          {showFiles && (
+            <div style={{ marginTop: 6, display: "flex", flexDirection: "column", gap: 8 }}>
+              {parsed.readFiles.length > 0 && (
+                <CompactionFileList label={t("compactionRead")} files={parsed.readFiles} />
+              )}
+              {parsed.modifiedFiles.length > 0 && (
+                <CompactionFileList label={t("compactionModified")} files={parsed.modifiedFiles} />
+              )}
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function CompactionFileList({ label, files }: { label: string; files: string[] }) {
+  return (
+    <div>
+      <div style={{ fontSize: 11, color: "var(--text-dim)", marginBottom: 2 }}>{label}</div>
+      <ul className="compaction-file-list" style={{ margin: 0, paddingLeft: 16, fontFamily: "var(--font-mono)", fontSize: 11, color: "var(--text-muted)" }}>
+        {files.map((f, i) => (
+          <li key={i}>{f}</li>
+        ))}
+      </ul>
+    </div>
+  );
 }
 
 function UserMessageView({ message, entryId, onFork, forking, onNavigate, prevAssistantEntryId, onEditContent }: {

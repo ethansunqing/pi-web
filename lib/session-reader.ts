@@ -162,13 +162,20 @@ export function buildSessionContext(entries: SessionEntry[], leafId?: string | n
   }
 
   // pi injects compaction summary as {role:"compactionSummary", summary, tokensBefore}.
-  // Convert to {role:"user"} so MessageView can render it the same as before.
+  // Convert to a custom compaction card so MessageView renders it as a bordered card
+  // with the summary + collapsible file metadata, rather than a plain user message.
   const messages = (piCtx.messages as AssistantMessage[]).map((msg) => {
     const raw = msg as unknown as Record<string, unknown>;
     if (raw.role === "compactionSummary") {
       return {
-        role: "user" as const,
-        content: `*The conversation history before this point was compacted into the following summary:*\n\n${raw.summary ?? ""}`,
+        role: "custom" as const,
+        customType: "compaction",
+        content: (raw.summary as string) ?? "",
+        display: true,
+        details: {
+          tokensBefore: raw.tokensBefore,
+          firstKeptEntryId: raw.firstKeptEntryId,
+        },
         timestamp: raw.timestamp as number | undefined,
       };
     }
