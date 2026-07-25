@@ -79,7 +79,14 @@
     "noToolsNote": " — agent will not use any tools",
     "steerPlaceholder": "Steer: inject immediately / Follow-up: queue after…",
     "toolInputCopied": "Copied",
-    "copyToolInput": "Copy tool input"
+    "copyToolInput": "Copy tool input",
+    "thinkingUnavailable": "Thinking content unavailable",
+    "loadingThinking": "Loading thinking...",
+    "showExtensionMessage": "Show extension message",
+    "collapse": "Collapse",
+    "expand": "Expand",
+    "hideDetails": "Hide details",
+    "showDetails": "Show details"
   },
   "sidebar": {
     "newSession": "New Session",
@@ -271,7 +278,8 @@
     "wordPreview": "Word preview",
     "saved": "Saved",
     "save": "Save",
-    "saving": "Saving..."
+    "saving": "Saving...",
+    "downloadFile": "Download file"
   },
   "shell": {
     "models": "Models",
