@@ -3,11 +3,29 @@ import fs from "fs";
 import path from "path";
 import {
   getAllowedFileRoots,
+  isExistingFilePathAllowed,
   isFilePathAllowed,
   isWindowsAbsolutePath,
   normalizeSlashes,
 } from "@/lib/file-access";
+import {
+  DOCX_PREVIEW_MAX_BYTES,
+  IMAGE_PREVIEW_MAX_BYTES,
+  TEXT_PREVIEW_MAX_BYTES,
+  documentPreviewKind,
+  getAudioMime,
+  getDocumentMime,
+  getFileExt,
+  getImageMime,
+} from "@/lib/file-types";
+import { resolveDirentIsDirectory } from "@/lib/file-dirent";
 import { isFilePathReferencedBySession } from "@/lib/session-file-references";
+import {
+  inspectUploadTargets,
+  parseUploadConflictStrategy,
+  validateUploadFileNames,
+} from "@/lib/file-upload";
+import { parseFormDataWithinLimit, RequestBodyTooLargeError } from "@/lib/bounded-form-data";
 
 const IGNORED_NAMES = new Set([
   "node_modules", ".git", ".next", "dist", "build", "__pycache__",
@@ -17,60 +35,13 @@ const IGNORED_NAMES = new Set([
 
 const IGNORED_SUFFIXES = [".pyc"];
 
-const TEXT_PREVIEW_MAX_BYTES = 256 * 1024;
-const IMAGE_PREVIEW_MAX_BYTES = 10 * 1024 * 1024;
-const DOCX_PREVIEW_MAX_BYTES = 10 * 1024 * 1024;
-
 const FILE_REQUEST_TYPES = ["list", "read", "download", "meta", "preview", "watch"] as const;
 type FileRequestType = typeof FILE_REQUEST_TYPES[number];
 const FILE_REQUEST_TYPE_SET = new Set<string>(FILE_REQUEST_TYPES);
-
-const IMAGE_EXT_TO_MIME: Record<string, string> = {
-  png: "image/png",
-  jpg: "image/jpeg",
-  jpeg: "image/jpeg",
-  gif: "image/gif",
-  webp: "image/webp",
-  svg: "image/svg+xml",
-  bmp: "image/bmp",
-  ico: "image/x-icon",
-  avif: "image/avif",
-};
-
-const AUDIO_EXT_TO_MIME: Record<string, string> = {
-  mp3: "audio/mpeg",
-  wav: "audio/wav",
-  ogg: "audio/ogg",
-  oga: "audio/ogg",
-  opus: "audio/ogg",
-  m4a: "audio/mp4",
-  aac: "audio/aac",
-  flac: "audio/flac",
-  weba: "audio/webm",
-  webm: "audio/webm",
-};
-
-const DOCUMENT_EXT_TO_MIME: Record<string, string> = {
-  pdf: "application/pdf",
-  docx: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-};
-
-function getExt(filePath: string): string {
-  const ext = path.basename(filePath).toLowerCase().split(".").pop() ?? "";
-  return ext;
-}
-
-function getImageMime(filePath: string): string | null {
-  return IMAGE_EXT_TO_MIME[getExt(filePath)] ?? null;
-}
-
-function getAudioMime(filePath: string): string | null {
-  return AUDIO_EXT_TO_MIME[getExt(filePath)] ?? null;
-}
-
-function getDocumentMime(filePath: string): string | null {
-  return DOCUMENT_EXT_TO_MIME[getExt(filePath)] ?? null;
-}
+const MAX_UPLOAD_FILE_BYTES = 25 * 1024 * 1024;
+const MAX_UPLOAD_TOTAL_BYTES = 100 * 1024 * 1024;
+// Multipart boundaries and headers are not file bytes, but must be bounded too.
+const MAX_UPLOAD_REQUEST_BYTES = MAX_UPLOAD_TOTAL_BYTES + 1024 * 1024;
 
 const EXT_TO_LANGUAGE: Record<string, string> = {
   ts: "typescript", tsx: "typescript", js: "javascript", jsx: "javascript",
@@ -106,6 +77,163 @@ function filePathFromSegments(segments: string[]): string {
 
 function parseFileRequestType(value: string): FileRequestType | null {
   return FILE_REQUEST_TYPE_SET.has(value) ? (value as FileRequestType) : null;
+}
+
+async function getUploadDirectory(segments: string[]): Promise<
+  { directory: string } | { response: NextResponse }
+> {
+  const directory = filePathFromSegments(segments);
+  const allowedRoots = await getAllowedFileRoots();
+  if (!isFilePathAllowed(directory, allowedRoots)) {
+    return { response: NextResponse.json({ error: "Access denied" }, { status: 403 }) };
+  }
+
+  let stat: fs.Stats;
+  try {
+    stat = fs.statSync(directory);
+  } catch {
+    return { response: NextResponse.json({ error: "Upload directory not found" }, { status: 404 }) };
+  }
+  if (!stat.isDirectory()) {
+    return { response: NextResponse.json({ error: "Upload target is not a directory" }, { status: 400 }) };
+  }
+
+  // A browsable directory can be a symlink. Resolve both sides before writes
+  // so a symlink inside an allowed root cannot redirect uploads outside it.
+  const realDirectory = fs.realpathSync(directory);
+  const realRoots = new Set<string>();
+  for (const root of allowedRoots) {
+    try {
+      realRoots.add(fs.realpathSync(root));
+    } catch {
+      // Ignore stale session roots that no longer exist.
+    }
+  }
+  if (!isFilePathAllowed(realDirectory, realRoots)) {
+    return { response: NextResponse.json({ error: "Access denied" }, { status: 403 }) };
+  }
+
+  return { directory: realDirectory };
+}
+
+function parseUploadFileNames(value: unknown): string[] | null {
+  if (!Array.isArray(value) || !value.every((item) => typeof item === "string")) return null;
+  return value;
+}
+
+export async function POST(
+  request: NextRequest,
+  { params }: { params: Promise<{ path: string[] }> }
+) {
+  try {
+    const { path: segments } = await params;
+    const uploadDirectory = await getUploadDirectory(segments);
+    if ("response" in uploadDirectory) return uploadDirectory.response;
+    const { directory } = uploadDirectory;
+    const type = request.nextUrl.searchParams.get("type") ?? "upload";
+
+    if (type === "upload-check") {
+      const body = await request.json().catch(() => null) as { fileNames?: unknown } | null;
+      const fileNames = parseUploadFileNames(body?.fileNames);
+      if (!fileNames) {
+        return NextResponse.json({ error: "fileNames must be an array of strings" }, { status: 400 });
+      }
+      const validationError = validateUploadFileNames(fileNames);
+      if (validationError) {
+        return NextResponse.json({ error: validationError }, { status: 400 });
+      }
+      return NextResponse.json(inspectUploadTargets(directory, fileNames));
+    }
+
+    if (type !== "upload") {
+      return NextResponse.json({ error: "Invalid upload request type" }, { status: 400 });
+    }
+
+    const strategy = parseUploadConflictStrategy(request.nextUrl.searchParams.get("conflict"));
+    if (!strategy) {
+      return NextResponse.json({ error: "Invalid conflict strategy" }, { status: 400 });
+    }
+
+    let formData: FormData;
+    try {
+      formData = await parseFormDataWithinLimit(request, MAX_UPLOAD_REQUEST_BYTES);
+    } catch (error) {
+      if (error instanceof RequestBodyTooLargeError) {
+        return NextResponse.json({ error: "Uploads must total 100MB or less" }, { status: 413 });
+      }
+      throw error;
+    }
+    const files = formData.getAll("files").filter((entry): entry is File => typeof entry !== "string");
+    if (files.some((file) => file.size > MAX_UPLOAD_FILE_BYTES)) {
+      return NextResponse.json({ error: "Each upload must be 25MB or smaller" }, { status: 413 });
+    }
+    if (files.reduce((total, file) => total + file.size, 0) > MAX_UPLOAD_TOTAL_BYTES) {
+      return NextResponse.json({ error: "Uploads must total 100MB or less" }, { status: 413 });
+    }
+    const fileNames = files.map((file) => file.name);
+    const validationError = validateUploadFileNames(fileNames);
+    if (validationError) {
+      return NextResponse.json({ error: validationError }, { status: 400 });
+    }
+
+    const inspection = inspectUploadTargets(directory, fileNames);
+    if (strategy === "error" && inspection.conflicts.length > 0) {
+      return NextResponse.json({
+        error: "One or more files already exist",
+        conflicts: inspection.conflicts,
+        nonReplaceable: inspection.nonReplaceable,
+      }, { status: 409 });
+    }
+
+    const conflictSet = new Set(inspection.conflicts);
+    const nonReplaceableSet = new Set(inspection.nonReplaceable);
+    const uploaded: string[] = [];
+    const skipped: string[] = [];
+    const errors: Array<{ name: string; error: string }> = [];
+
+    for (const file of files) {
+      const destination = path.join(directory, file.name);
+      if (conflictSet.has(file.name) && strategy === "skip") {
+        skipped.push(file.name);
+        continue;
+      }
+      if (conflictSet.has(file.name) && nonReplaceableSet.has(file.name)) {
+        errors.push({ name: file.name, error: "Cannot replace a directory or symbolic link" });
+        continue;
+      }
+
+      let bytes: Buffer;
+      try {
+        bytes = Buffer.from(await file.arrayBuffer());
+      } catch (error) {
+        errors.push({ name: file.name, error: error instanceof Error ? error.message : String(error) });
+        continue;
+      }
+
+      if (conflictSet.has(file.name)) {
+        try {
+          fs.unlinkSync(destination);
+        } catch (error) {
+          errors.push({ name: file.name, error: error instanceof Error ? error.message : String(error) });
+          continue;
+        }
+      }
+
+      try {
+        fs.writeFileSync(destination, bytes, { flag: "wx" });
+        uploaded.push(file.name);
+      } catch (error) {
+        errors.push({ name: file.name, error: error instanceof Error ? error.message : String(error) });
+      }
+    }
+
+    return NextResponse.json(
+      { uploaded, skipped, errors },
+      { status: errors.length > 0 ? 207 : 200 },
+    );
+  } catch (error) {
+    return NextResponse.json({ error: error instanceof Error ? error.message : String(error) }, { status: 500 });
+  }
 }
 
 function createFileBodyStream(filePath: string, range?: { start: number; end: number }): ReadableStream<Uint8Array> {
@@ -155,18 +283,19 @@ function encodeHeaderValue(value: string): string {
   );
 }
 
-function getContentDisposition(filePath: string): string {
+function getContentDisposition(filePath: string, asDownload = false): string {
+  const disposition = asDownload ? "attachment" : "inline";
   const fileName = path.basename(filePath);
   const fallback = fileName.replace(/[^\x20-\x7E]|["\\;\r\n]/g, "_") || "download";
-  return `inline; filename="${fallback}"; filename*=UTF-8''${encodeHeaderValue(fileName)}`;
+  return `${disposition}; filename="${fallback}"; filename*=UTF-8''${encodeHeaderValue(fileName)}`;
 }
 
-function streamFile(filePath: string, stat: fs.Stats, contentType: string, rangeHeader: string | null): Response {
+function streamFile(filePath: string, stat: fs.Stats, contentType: string, rangeHeader: string | null, asDownload = false): Response {
   const headers = {
     "Content-Type": contentType,
     "Cache-Control": "no-cache",
     "Accept-Ranges": "bytes",
-    "Content-Disposition": getContentDisposition(filePath),
+    "Content-Disposition": getContentDisposition(filePath, asDownload),
   };
 
   if (!rangeHeader) {
@@ -217,13 +346,6 @@ function streamFile(filePath: string, stat: fs.Stats, contentType: string, range
       "Content-Range": `bytes ${start}-${end}/${stat.size}`,
     },
   });
-}
-
-function documentPreviewKind(filePath: string): "pdf" | "docx" | null {
-  const ext = getExt(filePath);
-  if (ext === "pdf") return "pdf";
-  if (ext === "docx") return "docx";
-  return null;
 }
 
 function escapeHtml(text: string): string {
@@ -315,6 +437,10 @@ export async function GET(
       return NextResponse.json({ error: "Not found" }, { status: 404 });
     }
 
+    if (!allowedBySessionReference && !isExistingFilePathAllowed(filePath, allowedRoots)) {
+      return NextResponse.json({ error: "Access denied" }, { status: 403 });
+    }
+
     if (type === "read") {
       if (!stat.isFile()) {
         return NextResponse.json({ error: "Not a file" }, { status: 400 });
@@ -342,6 +468,14 @@ export async function GET(
       return NextResponse.json({ content, language, size: stat.size });
     }
 
+    if (type === "download") {
+      if (!stat.isFile()) {
+        return NextResponse.json({ error: "Not a file" }, { status: 400 });
+      }
+      const mime = getImageMime(filePath) || getAudioMime(filePath) || getDocumentMime(filePath) || "application/octet-stream";
+      return streamFile(filePath, stat, mime, request.headers.get("range"), true);
+    }
+
     if (type === "meta") {
       if (!stat.isFile()) {
         return NextResponse.json({ error: "Not a file" }, { status: 400 });
@@ -361,7 +495,7 @@ export async function GET(
       if (!stat.isFile()) {
         return NextResponse.json({ error: "Not a file" }, { status: 400 });
       }
-      if (getExt(filePath) !== "docx") {
+      if (getFileExt(filePath) !== "docx") {
         return NextResponse.json({ error: "Preview not available for this file type" }, { status: 400 });
       }
       if (stat.size > DOCX_PREVIEW_MAX_BYTES) {
@@ -393,6 +527,8 @@ export async function GET(
         return NextResponse.json({ error: "Not a file" }, { status: 400 });
       }
       let watcher: fs.FSWatcher | null = null;
+      let lastMtimeMs = stat.mtimeMs;
+      let lastSize = stat.size;
       const stream = new ReadableStream({
         start(controller) {
           const send = (eventName: string, data: Record<string, unknown>) => {
@@ -409,6 +545,11 @@ export async function GET(
             watcher = fs.watch(filePath, () => {
               try {
                 const s = fs.statSync(filePath);
+                // Some platforms emit watch events for file reads/attribute
+                // access. Ignore those or the client's refresh read loops.
+                if (s.mtimeMs === lastMtimeMs && s.size === lastSize) return;
+                lastMtimeMs = s.mtimeMs;
+                lastSize = s.size;
                 send("change", { mtime: s.mtime.toISOString(), size: s.size });
               } catch {
                 send("change", { mtime: new Date().toISOString(), size: 0 });
@@ -441,28 +582,21 @@ export async function GET(
       return NextResponse.json({ error: "Not a directory" }, { status: 400 });
     }
 
-    const names = fs.readdirSync(filePath);
-    const entries = names
-      .filter((name) => !IGNORED_NAMES.has(name) && !IGNORED_SUFFIXES.some((s) => name.endsWith(s)))
-      .map((name) => {
-        const full = path.join(filePath, name);
-        try {
-          const s = fs.statSync(full);
-          return {
-            name,
-            isDir: s.isDirectory(),
-            size: s.isFile() ? s.size : 0,
-            modified: s.mtime.toISOString(),
-          };
-        } catch {
-          return null;
-        }
+    // Avoid per-entry stat calls for normal files and directories. Symlinks and
+    // filesystems without directory type information use the stat fallback.
+    const dirents = fs.readdirSync(filePath, { withFileTypes: true });
+    const entries = dirents
+      .filter((d) => !IGNORED_NAMES.has(d.name) && !IGNORED_SUFFIXES.some((s) => d.name.endsWith(s)))
+      .flatMap((d) => {
+        const isDir = resolveDirentIsDirectory(d, path.join(filePath, d.name));
+        return isDir === null
+          ? []
+          : [{ name: d.name, isDir, size: 0, modified: "" }];
       })
-      .filter(Boolean)
       .sort((a, b) => {
         // Dirs first, then files, both alphabetically
-        if (a!.isDir !== b!.isDir) return a!.isDir ? -1 : 1;
-        return a!.name.localeCompare(b!.name);
+        if (a.isDir !== b.isDir) return a.isDir ? -1 : 1;
+        return a.name.localeCompare(b.name);
       });
 
     return NextResponse.json({ entries, path: filePath });

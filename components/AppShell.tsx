@@ -3,38 +3,77 @@
 import { useState, useCallback, useRef, useEffect } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useLocale, useTranslations } from "next-intl";
+import { useGlobalKeyboardShortcuts } from "@/hooks/useKeyboardShortcuts";
 import { SessionSidebar } from "./SessionSidebar";
 import { ChatWindow } from "./ChatWindow";
 import { FileViewer } from "./FileViewer";
 import { TabBar, type Tab } from "./TabBar";
 import { ModelsConfig } from "./ModelsConfig";
 import { SkillsConfig } from "./SkillsConfig";
+import { PluginsConfig } from "./PluginsConfig";
 import { BranchNavigator } from "./BranchNavigator";
 import { useTheme } from "@/hooks/useTheme";
+import { useIsMobile } from "@/hooks/useIsMobile";
+import { copyText } from "@/lib/clipboard";
 import { getFileName } from "@/lib/file-paths";
+import { buildAtMentionText, buildFileAtMentionsText, buildFileLineMentionText } from "@/lib/file-fuzzy";
+import { getInitialNavigation } from "@/lib/initial-navigation";
 import type { SessionInfo, SessionTreeNode } from "@/lib/types";
 import type { ChatInputHandle } from "./ChatInput";
+import type { SessionStatsInfo } from "@/lib/pi-types";
+
+type SessionCopyField = "file" | "id";
+type AutoNameStatus =
+  | { kind: "idle" }
+  | { kind: "naming" }
+  | { kind: "success" }
+  | { kind: "error"; message: string };
 
 export function AppShell() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const locale = useLocale();
   const sh = useTranslations("shell");
-  const cht = useTranslations("chat");
+  const [initialNavigation] = useState(() => getInitialNavigation(searchParams));
   const { isDark, toggleTheme } = useTheme();
+  const isMobile = useIsMobile();
+  const [localeMenuOpen, setLocaleMenuOpen] = useState(false);
+  const localeMenuRef = useRef<HTMLDivElement>(null);
+  const localeBtnRef = useRef<HTMLButtonElement>(null);
+  useEffect(() => {
+    if (!localeMenuOpen) return;
+    const onDown = (e: MouseEvent) => {
+      if (localeMenuRef.current && !localeMenuRef.current.contains(e.target as Node)) {
+        setLocaleMenuOpen(false);
+      }
+    };
+    document.addEventListener("mousedown", onDown);
+    return () => document.removeEventListener("mousedown", onDown);
+  }, [localeMenuOpen]);
   const [selectedSession, setSelectedSession] = useState<SessionInfo | null>(null);
   // When user clicks +, we only store the cwd — no fake session id
   const [newSessionCwd, setNewSessionCwd] = useState<string | null>(null);
+  const [initialCwdStatus, setInitialCwdStatus] = useState<"idle" | "validating" | "ready" | "error">(
+    () => initialNavigation.requestedCwd ? "validating" : "idle",
+  );
+  const [initialCwdError, setInitialCwdError] = useState<string | null>(null);
   const [refreshKey, setRefreshKey] = useState(0);
   const [sessionKey, setSessionKey] = useState(0);
   const [explorerRefreshKey, setExplorerRefreshKey] = useState(0);
   const [modelsConfigOpen, setModelsConfigOpen] = useState(false);
   const [modelsRefreshKey, setModelsRefreshKey] = useState(0);
   const [skillsConfigOpen, setSkillsConfigOpen] = useState(false);
+  const [pluginsConfigOpen, setPluginsConfigOpen] = useState(false);
   const [sidebarOpen, setSidebarOpen] = useState(true);
-  const [localeMenuOpen, setLocaleMenuOpen] = useState(false);
-  const localeMenuRef = useRef<HTMLDivElement>(null);
-  const localeBtnRef = useRef<HTMLButtonElement>(null);
+  const [mobileSidebarReady, setMobileSidebarReady] = useState(false);
+  // On mobile the sidebar is an overlay drawer; hide it by default so the chat
+  // is visible on load. Runs once the breakpoint resolves after hydration.
+  useEffect(() => {
+    if (isMobile) setSidebarOpen(false);
+  }, [isMobile]);
+  useEffect(() => {
+    setMobileSidebarReady(true);
+  }, []);
   const chatInputRef = useRef<ChatInputHandle | null>(null);
   const topBarRef = useRef<HTMLDivElement>(null);
 
@@ -61,9 +100,29 @@ export function AppShell() {
   }, []);
 
   // Session stats (tokens + cost) — populated by ChatWindow, displayed in top bar
-  const [sessionStats, setSessionStats] = useState<{ tokens: { input: number; output: number; cacheRead: number; cacheWrite: number }; cost?: number } | null>(null);
-  const handleSessionStatsChange = useCallback((stats: { tokens: { input: number; output: number; cacheRead: number; cacheWrite: number }; cost?: number } | null) => {
+  const [sessionStats, setSessionStats] = useState<SessionStatsInfo | null>(null);
+  const [autoNameStatus, setAutoNameStatus] = useState<AutoNameStatus>({ kind: "idle" });
+  const autoNameTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const activeSessionIdRef = useRef<string | null>(selectedSession?.id ?? null);
+  activeSessionIdRef.current = selectedSession?.id ?? null;
+  const handleSessionStatsChange = useCallback((stats: SessionStatsInfo | null) => {
     setSessionStats(stats);
+  }, []);
+  const [copiedSessionField, setCopiedSessionField] = useState<SessionCopyField | null>(null);
+  const sessionCopyTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const handleCopySessionField = useCallback((field: SessionCopyField, value: string) => {
+    void copyText(value).then(() => {
+      if (sessionCopyTimerRef.current) clearTimeout(sessionCopyTimerRef.current);
+      setCopiedSessionField(field);
+      sessionCopyTimerRef.current = setTimeout(() => setCopiedSessionField(null), 1400);
+    });
+  }, []);
+
+  useEffect(() => {
+    return () => {
+      if (sessionCopyTimerRef.current) clearTimeout(sessionCopyTimerRef.current);
+      if (autoNameTimerRef.current) clearTimeout(autoNameTimerRef.current);
+    };
   }, []);
 
   // Context usage — populated by ChatWindow, displayed in top bar
@@ -73,12 +132,23 @@ export function AppShell() {
   }, []);
 
   // Single active panel — only one dropdown open at a time
-  const [activeTopPanel, setActiveTopPanel] = useState<"branches" | "system" | null>(null);
+  const [activeTopPanel, setActiveTopPanel] = useState<"branches" | "system" | "session" | null>(null);
   const [topPanelPos, setTopPanelPos] = useState<{ top: number; left: number; width: number } | null>(null);
 
-  const toggleTopPanel = useCallback((panel: "branches" | "system") => {
+  const toggleTopPanel = useCallback((panel: "branches" | "system" | "session") => {
+    if (isMobile) setSidebarOpen(false);
     setActiveTopPanel((cur) => cur === panel ? null : panel);
-  }, []);
+  }, [isMobile]);
+
+  const openSessionStatsPanel = useCallback(() => {
+    if (isMobile) setSidebarOpen(false);
+    setActiveTopPanel("session");
+  }, [isMobile]);
+
+  const handleSidebarToggle = useCallback(() => {
+    if (isMobile) setActiveTopPanel(null);
+    setSidebarOpen((open) => !open);
+  }, [isMobile]);
 
   useEffect(() => {
     if (!activeTopPanel || !topBarRef.current) return;
@@ -92,43 +162,86 @@ export function AppShell() {
     return () => ro.disconnect();
   }, [activeTopPanel]);
 
-  useEffect(() => {
-    if (!localeMenuOpen) return;
-    const handler = (e: MouseEvent) => {
-      if (localeMenuRef.current && !localeMenuRef.current.contains(e.target as Node)) {
-        setLocaleMenuOpen(false);
-      }
-    };
-    document.addEventListener("mousedown", handler);
-    return () => document.removeEventListener("mousedown", handler);
-  }, [localeMenuOpen]);
-
   // Right panel — file tabs only
   const [fileTabs, setFileTabs] = useState<Tab[]>([]);
   const [activeFileTabId, setActiveFileTabId] = useState<string | null>(null);
   const [rightPanelOpen, setRightPanelOpen] = useState(false);
 
-  const handleAtMention = useCallback((relativePath: string) => {
-    chatInputRef.current?.insertText("`" + relativePath + "`");
+  // Same @mention format as the chat input's @ autocomplete, so the agent's
+  // read tool resolves it the same way (it strips the @ prefix).
+  const handleAtMention = useCallback((relativePath: string, isDir: boolean) => {
+    chatInputRef.current?.insertText(buildAtMentionText(relativePath, isDir));
   }, []);
 
-  const [initialSessionId] = useState<string | null>(() => searchParams.get("session"));
+  const handleAtMentions = useCallback((relativePaths: string[]) => {
+    const mentions = buildFileAtMentionsText(relativePaths);
+    if (mentions) chatInputRef.current?.insertText(mentions);
+  }, []);
+
+  const handleFileLineMention = useCallback((relativePath: string, startLine: number, endLine: number) => {
+    chatInputRef.current?.insertText(buildFileLineMentionText(relativePath, startLine, endLine));
+  }, []);
+
+  const initialSessionId = initialNavigation.sessionId;
   const [activeCwd, setActiveCwd] = useState<string | null>(null);
   // True once the initial ?session= URL param has been resolved (or confirmed absent)
-  const [initialSessionRestored, setInitialSessionRestored] = useState<boolean>(() => !searchParams.get("session"));
+  const [initialSessionRestored, setInitialSessionRestored] = useState<boolean>(() => !initialSessionId);
   // Suppresses sessionKey bump in handleCwdChange during the initial URL restore
   const suppressCwdBumpRef = useRef(false);
 
-  const handleCwdChange = useCallback((cwd: string | null) => {
+  useEffect(() => {
+    const requestedCwd = initialNavigation.requestedCwd;
+    if (!requestedCwd) return;
+
+    const controller = new AbortController();
+    setInitialCwdStatus("validating");
+    setInitialCwdError(null);
+
+    void fetch("/api/cwd/validate", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ cwd: requestedCwd }),
+      signal: controller.signal,
+    })
+      .then(async (response) => {
+        const data = await response.json().catch(() => ({})) as { cwd?: string; error?: string };
+        if (!response.ok || !data.cwd) {
+          throw new Error(data.error ?? `HTTP ${response.status}`);
+        }
+
+        // The sidebar will notify us when it adopts this cwd. Avoid remounting
+        // the just-created empty chat during that initial synchronization.
+        suppressCwdBumpRef.current = true;
+        setNewSessionCwd(data.cwd);
+        setInitialCwdStatus("ready");
+      })
+      .catch((error: unknown) => {
+        if (controller.signal.aborted) return;
+        setInitialCwdError(error instanceof Error ? error.message : String(error));
+        setInitialCwdStatus("error");
+      });
+
+    return () => controller.abort();
+  }, [initialNavigation]);
+
+  const handleCwdChange = useCallback((cwd: string | null, projectRoot?: string | null) => {
     setActiveCwd(cwd);
     // Skip if cwd is null (initial mount) or during the initial URL restore.
-    if (!cwd || suppressCwdBumpRef.current) return;
-    // Close any session that belongs to a different cwd — it no longer
+    if (!cwd) return;
+    if (suppressCwdBumpRef.current) {
+      suppressCwdBumpRef.current = false;
+      return;
+    }
+    // Worktrees of one repo share a project root. Moving the effective cwd
+    // within the same project (e.g. switching worktree, or clicking a session
+    // that lives in another worktree) must not close the open session.
+    const newProject = projectRoot ?? cwd;
+    if (selectedSession && (selectedSession.projectRoot ?? selectedSession.cwd) === newProject) {
+      return;
+    }
+    // Close any session that belongs to a different project — it no longer
     // matches the selected project directory.
-    setSelectedSession((prev) => {
-      if (prev && prev.cwd !== cwd) return null;
-      return prev;
-    });
+    setSelectedSession(null);
     setNewSessionCwd((prev) => {
       if (prev && prev !== cwd) return null;
       return prev;
@@ -139,7 +252,7 @@ export function AppShell() {
     setSystemPrompt(null);
     setActiveTopPanel(null);
     router.replace("/", { scroll: false });
-  }, [router]);
+  }, [router, selectedSession]);
 
   const handleSelectSession = useCallback((session: SessionInfo, isRestore = false) => {
     setNewSessionCwd(null);
@@ -147,18 +260,19 @@ export function AppShell() {
     setSessionKey((k) => k + 1);
     setSystemPrompt(null);
     setInitialSessionRestored(true);
+    // On mobile, collapse the overlay drawer so the chat is revealed after pick.
+    if (isMobile && !isRestore) setSidebarOpen(false);
     if (isRestore) {
       // Suppress the redundant sessionKey bump that would come from the
       // onCwdChange effect firing after setSelectedCwd in the sidebar
       suppressCwdBumpRef.current = true;
-      setTimeout(() => { suppressCwdBumpRef.current = false; }, 0);
     }
     // Skip router.replace when restoring from URL — the param is already correct
     // and calling replace in production Next.js triggers a Suspense remount loop
     if (!isRestore) {
       router.replace(`?session=${encodeURIComponent(session.id)}`, { scroll: false });
     }
-  }, [router]);
+  }, [router, isMobile]);
 
   const handleNewSession = useCallback((_sessionId: string, cwd: string) => {
     setSelectedSession(null);
@@ -168,19 +282,82 @@ export function AppShell() {
     setBranchActiveLeafId(null);
     setSystemPrompt(null);
     setActiveTopPanel(null);
+    if (isMobile) setSidebarOpen(false);
     router.replace("/", { scroll: false });
-  }, [router]);
+  }, [router, isMobile]);
+
+  // Global keyboard shortcuts (handles Esc, Ctrl+Alt+N etc.)
+  useGlobalKeyboardShortcuts({
+    onNewSession: (cwd: string) => handleNewSession(`kb-${Date.now()}`, cwd),
+    activeCwd,
+  });
+
+  // Client-built transient SessionInfo (new session / fork) lacks the
+  // server-computed projectRoot, which the same-project check in
+  // handleCwdChange relies on. Hydrate it from the session list so switching
+  // worktrees right after creating a session doesn't close the chat.
+  const hydrateSelectedSession = useCallback((sessionId: string) => {
+    void fetch("/api/sessions")
+      .then((r) => (r.ok ? (r.json() as Promise<{ sessions: SessionInfo[] }>) : null))
+      .then((d) => {
+        const full = d?.sessions.find((s) => s.id === sessionId);
+        if (!full) return;
+        setSelectedSession((prev) => (prev && prev.id === sessionId && !prev.projectRoot ? full : prev));
+      })
+      .catch(() => {});
+  }, []);
 
   // Called by ChatWindow when a new session gets its real id from pi
   const handleSessionCreated = useCallback((session: SessionInfo) => {
     setNewSessionCwd(null);
     setSelectedSession(session);
     setRefreshKey((k) => k + 1);
+    hydrateSelectedSession(session.id);
     router.replace(`?session=${encodeURIComponent(session.id)}`, { scroll: false });
-  }, [router]);
+  }, [router, hydrateSelectedSession]);
 
   const handleAgentEnd = useCallback(() => {
     setRefreshKey((k) => k + 1);
+    setExplorerRefreshKey((k) => k + 1);
+  }, []);
+
+  const handleAutoName = useCallback(async () => {
+    const sessionId = selectedSession?.id;
+    if (!sessionId || autoNameStatus.kind === "naming") return;
+    if (autoNameTimerRef.current) clearTimeout(autoNameTimerRef.current);
+    setActiveTopPanel(null);
+    setAutoNameStatus({ kind: "naming" });
+
+    try {
+      const response = await fetch(`/api/sessions/${encodeURIComponent(sessionId)}/auto-name`, {
+        method: "POST",
+      });
+      const body = (await response.json().catch(() => ({}))) as { title?: string; error?: string };
+      if (!response.ok || !body.title) {
+        throw new Error(body.error || `HTTP ${response.status}`);
+      }
+
+      const title = body.title.trim();
+      setRefreshKey((key) => key + 1);
+      if (activeSessionIdRef.current !== sessionId) return;
+      setSelectedSession((current) => current?.id === sessionId ? { ...current, name: title } : current);
+      setSessionStats((current) => current?.sessionId === sessionId ? { ...current, sessionName: title } : current);
+      setAutoNameStatus({ kind: "success" });
+      autoNameTimerRef.current = setTimeout(() => setAutoNameStatus({ kind: "idle" }), 1800);
+    } catch (error) {
+      if (activeSessionIdRef.current !== sessionId) return;
+      const message = error instanceof Error ? error.message : String(error);
+      setAutoNameStatus({ kind: "error", message });
+      autoNameTimerRef.current = setTimeout(() => setAutoNameStatus({ kind: "idle" }), 5000);
+    }
+  }, [autoNameStatus.kind, selectedSession?.id]);
+
+  useEffect(() => {
+    if (autoNameTimerRef.current) clearTimeout(autoNameTimerRef.current);
+    setAutoNameStatus({ kind: "idle" });
+  }, [selectedSession?.id]);
+
+  const handleExplorerRefresh = useCallback(() => {
     setExplorerRefreshKey((k) => k + 1);
   }, []);
 
@@ -192,8 +369,9 @@ export function AppShell() {
       ...(prev ?? { path: "", cwd: "", created: "", modified: "", messageCount: 0, firstMessage: "" }),
       id: newSessionId,
     }));
+    hydrateSelectedSession(newSessionId);
     router.replace(`?session=${encodeURIComponent(newSessionId)}`, { scroll: false });
-  }, [router]);
+  }, [router, hydrateSelectedSession]);
 
   const handleInitialRestoreDone = useCallback(() => {
     setInitialSessionRestored(true);
@@ -218,13 +396,15 @@ export function AppShell() {
     const tabId = `file:${filePath}`;
     setFileTabs((prev) => {
       const existing = prev.find((t) => t.id === tabId);
-      if (!existing) return [...prev, { id: tabId, label: fileName, filePath, cwd: activeCwd ?? undefined, sourceSessionId: sourceSessionId ?? null }];
+      if (!existing) return [...prev, { id: tabId, label: fileName, filePath, sourceSessionId }];
       if (!sourceSessionId || existing.sourceSessionId === sourceSessionId) return prev;
       return prev.map((t) => t.id === tabId ? { ...t, sourceSessionId } : t);
     });
     setActiveFileTabId(tabId);
     setRightPanelOpen(true);
-  }, [activeCwd]);
+    // On mobile the file panel is full-screen; close the drawer so it shows.
+    if (isMobile) setSidebarOpen(false);
+  }, [isMobile]);
 
   const handleOpenLinkedFile = useCallback((filePath: string) => {
     handleOpenFile(filePath, getFileName(filePath), selectedSession?.id ?? null);
@@ -243,9 +423,13 @@ export function AppShell() {
     });
   }, [fileTabs]);
 
-  const handleExportSession = useCallback(() => {
+  const handleViewFullHistory = useCallback(() => {
     if (!selectedSession) return;
-    window.location.href = `/api/sessions/${encodeURIComponent(selectedSession.id)}/export`;
+    window.open(
+      `/api/sessions/${encodeURIComponent(selectedSession.id)}/export?inline=1`,
+      "_blank",
+      "noopener,noreferrer",
+    );
   }, [selectedSession]);
 
   // Show chat area if a session is selected, or if we have a cwd to start a new session in
@@ -255,6 +439,19 @@ export function AppShell() {
   const showPlaceholder = initialSessionRestored && !showChat;
 
   const activeFileTab = fileTabs.find((t) => t.id === activeFileTabId) ?? null;
+  const activeCwdName = activeCwd ? getFileName(activeCwd) || activeCwd : null;
+  const windowTitle = activeCwdName ? `${activeCwdName} - Pi Web` : "Pi Web";
+
+  useEffect(() => {
+    const syncWindowTitle = () => {
+      if (document.title !== windowTitle) document.title = windowTitle;
+    };
+
+    syncWindowTitle();
+    const observer = new MutationObserver(syncWindowTitle);
+    observer.observe(document.head, { childList: true, subtree: true, characterData: true });
+    return () => observer.disconnect();
+  }, [windowTitle]);
 
   const sidebarContent = (
     <>
@@ -263,6 +460,7 @@ export function AppShell() {
         onSelectSession={handleSelectSession}
         onNewSession={handleNewSession}
         initialSessionId={initialSessionId}
+        skipInitialProjectSelection={initialNavigation.requestedCwd !== null}
         onInitialRestoreDone={handleInitialRestoreDone}
         refreshKey={refreshKey}
         onSessionDeleted={handleSessionDeleted}
@@ -270,12 +468,14 @@ export function AppShell() {
         onCwdChange={handleCwdChange}
         onOpenFile={handleOpenFile}
         explorerRefreshKey={explorerRefreshKey}
+        onExplorerRefresh={handleExplorerRefresh}
         onAtMention={handleAtMention}
+        onAtMentions={handleAtMentions}
       />
       <div style={{ padding: "8px", flexShrink: 0, display: "flex", justifyContent: "space-between", gap: 4 }}>
         {([
           {
-            label: sh("models"),
+            label: "Models",
             onClick: () => setModelsConfigOpen(true),
             disabled: false,
             icon: (
@@ -289,7 +489,7 @@ export function AppShell() {
             ),
           },
           {
-            label: sh("skills"),
+            label: "Skills",
             onClick: () => setSkillsConfigOpen(true),
             disabled: !activeCwd && !selectedSession?.cwd && !newSessionCwd,
             icon: (
@@ -297,6 +497,19 @@ export function AppShell() {
                 <path d="M12 2L2 7l10 5 10-5-10-5z" />
                 <path d="M2 17l10 5 10-5" />
                 <path d="M2 12l10 5 10-5" />
+              </svg>
+            ),
+          },
+          {
+            label: "Plugins",
+            onClick: () => setPluginsConfigOpen(true),
+            disabled: !activeCwd && !selectedSession?.cwd && !newSessionCwd,
+            icon: (
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M9 7V2" />
+                <path d="M15 7V2" />
+                <path d="M6 13V8a1 1 0 0 1 1-1h10a1 1 0 0 1 1 1v5a6 6 0 0 1-12 0Z" />
+                <path d="M12 19v3" />
               </svg>
             ),
           },
@@ -326,10 +539,81 @@ export function AppShell() {
 
   return (
     <>
+    <style>{`
+      @keyframes session-info-pop {
+        0% {
+          opacity: 0;
+          transform: translateY(-24px);
+          filter: blur(6px);
+          box-shadow: 0 2px 8px rgba(0,0,0,0);
+        }
+        55% {
+          opacity: 1;
+          transform: translateY(0);
+          filter: blur(0);
+          background: color-mix(in srgb, var(--accent) 8%, var(--bg-panel));
+          box-shadow: 0 18px 44px rgba(37,99,235,0.16);
+        }
+        100% {
+          opacity: 1;
+          transform: translateY(0);
+          filter: blur(0);
+          background: var(--bg-panel);
+          box-shadow: 0 10px 28px rgba(0,0,0,0.10);
+        }
+      }
+      @keyframes session-info-light-wash {
+        0% {
+          opacity: 0;
+          transform: translateX(-110%) skewX(-16deg);
+        }
+        24% {
+          opacity: 0.42;
+        }
+        100% {
+          opacity: 0;
+          transform: translateX(115%) skewX(-16deg);
+        }
+      }
+      .session-info-popover {
+        position: relative;
+        overflow: hidden;
+        transform-origin: top right;
+        animation: session-info-pop 360ms ease-out both;
+        will-change: transform, opacity, filter, background, box-shadow;
+      }
+      .session-info-popover::after {
+        content: "";
+        position: absolute;
+        top: 0;
+        bottom: 0;
+        left: 0;
+        width: 44%;
+        pointer-events: none;
+        background: linear-gradient(90deg, transparent, color-mix(in srgb, var(--accent) 24%, transparent), transparent);
+        animation: session-info-light-wash 620ms ease-out both;
+      }
+      @media (prefers-reduced-motion: reduce) {
+        .session-info-popover,
+        .session-info-popover::after {
+          animation: none;
+        }
+      }
+      @media (max-width: 640px) {
+        .sidebar-overlay-backdrop.sidebar-mobile-pending {
+          opacity: 0 !important;
+          pointer-events: none !important;
+        }
+        .sidebar-container.sidebar-mobile-pending.sidebar-open {
+          transform: translateX(-100%);
+          box-shadow: none;
+        }
+      }
+    `}</style>
     <div style={{ display: "flex", height: "100dvh", overflow: "hidden", background: "var(--bg)" }}>
       {/* Mobile overlay backdrop */}
       <div
-        className="sidebar-overlay-backdrop"
+        className={`sidebar-overlay-backdrop${mobileSidebarReady ? "" : " sidebar-mobile-pending"}`}
         onClick={() => setSidebarOpen(false)}
         style={{
           position: "fixed",
@@ -344,7 +628,7 @@ export function AppShell() {
 
       {/* Left sidebar */}
       <div
-        className={`sidebar-container${sidebarOpen ? " sidebar-open" : " sidebar-closed"}`}
+        className={`sidebar-container${sidebarOpen ? " sidebar-open" : " sidebar-closed"}${mobileSidebarReady ? "" : " sidebar-mobile-pending"}`}
         style={{
           background: "var(--bg-panel)",
           borderRight: "1px solid var(--border)",
@@ -362,8 +646,9 @@ export function AppShell() {
         {/* Top bar with sidebar toggle */}
         <div ref={topBarRef} style={{ display: "flex", alignItems: "center", flexShrink: 0, borderBottom: "1px solid var(--border)", height: 36, background: "var(--bg-panel)" }}>
           <button
-            onClick={() => setSidebarOpen((v) => !v)}
-            title={sidebarOpen ? sh("hideSidebar") : sh("showSidebar")}
+            onClick={handleSidebarToggle}
+            title={sidebarOpen ? "Hide sidebar" : "Show sidebar"}
+            aria-label={sidebarOpen ? "Hide sidebar" : "Show sidebar"}
             style={{
               display: "flex", alignItems: "center", justifyContent: "center",
               width: 36, height: 36, padding: 0,
@@ -388,8 +673,8 @@ export function AppShell() {
               const rect = e.currentTarget.getBoundingClientRect();
               toggleTheme({ x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 });
             }}
-            title={isDark ? sh("lightMode") : sh("darkMode")}
-            aria-label={isDark ? sh("lightMode") : sh("darkMode")}
+            title={isDark ? "Switch to light mode" : "Switch to dark mode"}
+            aria-label={isDark ? "Switch to light mode" : "Switch to dark mode"}
             aria-pressed={isDark}
             style={{
               display: "flex", alignItems: "center", justifyContent: "center",
@@ -482,10 +767,10 @@ export function AppShell() {
           {showChat && (
             <div style={{ display: "flex", alignItems: "stretch", height: "100%" }}>
               <button
-                onClick={handleExportSession}
+                onClick={handleViewFullHistory}
                 disabled={!selectedSession}
-                title={selectedSession ? "Export HTML" : "Export is available after the session is saved"}
-                aria-label="Export HTML"
+                title={selectedSession ? "View full history" : "Full history is available after the session is saved"}
+                aria-label="View full history"
                 style={{
                   display: "flex",
                   alignItems: "center",
@@ -514,30 +799,104 @@ export function AppShell() {
                   e.currentTarget.style.background = "none";
                 }}
               >
-                <span style={{
-                  display: "flex",
-                  alignItems: "center",
-                  justifyContent: "center",
-                  width: 18,
-                  height: 18,
-                  borderRadius: 5,
-                  background: "transparent",
-                  color: selectedSession ? "var(--text-muted)" : "var(--text-dim)",
-                  flexShrink: 0,
-                }}>
-                  <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
-                    <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
-                    <polyline points="7 10 12 15 17 10" />
-                    <line x1="12" y1="15" x2="12" y2="3" />
-                  </svg>
-                </span>
-                <span>Export</span>
+                <svg
+                  width="12"
+                  height="12"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="2"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  style={{
+                    color: selectedSession ? "var(--text-muted)" : "var(--text-dim)",
+                    flexShrink: 0,
+                  }}
+                >
+                  <path d="M3 12a9 9 0 1 0 3-6.7L3 8" />
+                  <path d="M3 3v5h5" />
+                  <path d="M12 7v5l3 2" />
+                </svg>
+                {!isMobile && <span>Full history</span>}
               </button>
+              {(() => {
+                const hasMessages = Boolean(
+                  selectedSession
+                  && (sessionStats?.userMessages ?? selectedSession.messageCount) > 0,
+                );
+                const disabled = !selectedSession || !hasMessages || autoNameStatus.kind === "naming";
+                const isSuccess = autoNameStatus.kind === "success";
+                const isError = autoNameStatus.kind === "error";
+                const label = autoNameStatus.kind === "naming"
+                  ? "Generating..."
+                  : isSuccess
+                    ? "Title updated"
+                    : isError
+                      ? "Generation failed"
+                      : "Generate title";
+                const title = !selectedSession
+                  ? "Title generation is available after the session is saved"
+                  : !hasMessages
+                    ? "Send a message before naming this session"
+                    : isError
+                      ? autoNameStatus.message
+                      : "Generate a session title";
+
+                return (
+                  <button
+                    type="button"
+                    onClick={() => void handleAutoName()}
+                    disabled={disabled}
+                    title={title}
+                    aria-label={label}
+                    style={{
+                      display: "flex", alignItems: "center", gap: 6,
+                      height: "100%", padding: "0 12px",
+                      background: "none", border: "none",
+                      borderTop: "2px solid transparent",
+                      borderRight: "1px solid var(--border)",
+                      color: isError ? "#dc2626" : isSuccess ? "var(--accent)" : disabled ? "var(--text-dim)" : "var(--text-muted)",
+                      cursor: disabled ? "not-allowed" : "pointer",
+                      opacity: disabled && autoNameStatus.kind !== "naming" ? 0.45 : 1,
+                      flexShrink: 0, fontSize: 11, whiteSpace: "nowrap",
+                      transition: "color 0.1s, background 0.1s, opacity 0.1s",
+                    }}
+                    onMouseEnter={(e) => {
+                      if (disabled) return;
+                      e.currentTarget.style.color = isError ? "#dc2626" : "var(--text)";
+                      e.currentTarget.style.background = "var(--bg-hover)";
+                    }}
+                    onMouseLeave={(e) => {
+                      e.currentTarget.style.color = isError ? "#dc2626" : isSuccess ? "var(--accent)" : disabled ? "var(--text-dim)" : "var(--text-muted)";
+                      e.currentTarget.style.background = "none";
+                    }}
+                  >
+                    {autoNameStatus.kind === "naming" ? (
+                      <svg className="animate-spin" width="13" height="13" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                        <circle cx="12" cy="12" r="9" stroke="currentColor" strokeWidth="2" opacity="0.25" />
+                        <path d="M21 12a9 9 0 0 0-9-9" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
+                      </svg>
+                    ) : isSuccess ? (
+                      <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                        <polyline points="20 6 9 17 4 12" />
+                      </svg>
+                    ) : (
+                      <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                        <path d="m15 4 5 5L7 22l-5-5Z" />
+                        <path d="m14 5 5 5" />
+                        <path d="M6 4V2M5 3H3M19 19v3M17.5 20.5h3" />
+                      </svg>
+                    )}
+                    {!isMobile && <span>{label}</span>}
+                  </button>
+                );
+              })()}
               <BranchNavigator
                 tree={branchTree}
                 activeLeafId={branchActiveLeafId}
                 onLeafChange={handleBranchLeafChange}
                 inline
+                compact={isMobile}
                 containerRef={topBarRef}
                 open={activeTopPanel === "branches"}
                 onToggle={() => toggleTopPanel("branches")}
@@ -546,6 +905,9 @@ export function AppShell() {
               <button
                 ref={systemBtnRef}
                 onClick={() => toggleTopPanel("system")}
+                title="System prompt"
+                aria-label="System prompt"
+                aria-pressed={activeTopPanel === "system"}
                 style={{
                   display: "flex", alignItems: "center", gap: 6,
                   height: "100%", padding: "0 12px",
@@ -566,7 +928,7 @@ export function AppShell() {
                   <line x1="8" y1="13" x2="16" y2="13" />
                   <line x1="8" y1="17" x2="13" y2="17" />
                 </svg>
-                <span>{sh("system")}</span>
+                {!isMobile && <span>System</span>}
               </button>
             </div>
           )}
@@ -588,33 +950,48 @@ export function AppShell() {
 
             const tooltipParts: string[] = [];
             if (t) {
-              tooltipParts.push(`${cht("tokensIn")}: ${t.input.toLocaleString()}`);
-              tooltipParts.push(`${cht("tokensOut")}: ${t.output.toLocaleString()}`);
-              tooltipParts.push(`${cht("tokensCacheRead")}: ${t.cacheRead.toLocaleString()}`);
-              tooltipParts.push(`${cht("tokensCacheWrite")}: ${t.cacheWrite.toLocaleString()}`);
-              if (c > 0) tooltipParts.push(`${cht("tokensCost")}: $${c.toFixed(4)}`);
+              tooltipParts.push(`in: ${t.input.toLocaleString()}`);
+              tooltipParts.push(`out: ${t.output.toLocaleString()}`);
+              tooltipParts.push(`cache read: ${t.cacheRead.toLocaleString()}`);
+              tooltipParts.push(`cache write: ${t.cacheWrite.toLocaleString()}`);
+              if (c > 0) tooltipParts.push(`cost: $${c.toFixed(4)}`);
             }
             if (contextUsage?.contextWindow) {
               const pct = contextUsage.percent;
-              tooltipParts.push(`${cht("context")}: ${pct !== null ? pct.toFixed(1) + "%" : cht("unknown")} ${cht("contextOf")} ${contextUsage.contextWindow.toLocaleString()} ${cht("contextTokens")}`);
+              tooltipParts.push(`context: ${pct !== null ? pct.toFixed(1) + "%" : "unknown"} of ${contextUsage.contextWindow.toLocaleString()} tokens`);
             }
             const tooltip = tooltipParts.join("  |  ");
 
             return (
-              <div
-                title={tooltip}
+              <button
+                type="button"
+                onClick={() => toggleTopPanel("session")}
+                title={tooltip || "Session info"}
+                aria-label="Session info"
+                aria-pressed={activeTopPanel === "session"}
                 style={{
                   marginLeft: "auto",
                   display: "flex", alignItems: "center", gap: 10,
                   paddingLeft: 12,
                   paddingRight: rightPanelOpen ? 12 : 48,
                   height: "100%",
+                  background: activeTopPanel === "session" ? "var(--bg-selected)" : "none",
+                  border: "none",
+                  borderTop: activeTopPanel === "session" ? "2px solid var(--accent)" : "2px solid transparent",
                   fontSize: 11, color: "var(--text-muted)",
-                  whiteSpace: "nowrap", cursor: "default",
+                  whiteSpace: "nowrap", cursor: "pointer",
                   fontVariantNumeric: "tabular-nums",
+                  transition: "color 0.1s, background 0.1s",
                 }}
+                onMouseEnter={(e) => { e.currentTarget.style.color = "var(--text)"; }}
+                onMouseLeave={(e) => { e.currentTarget.style.color = activeTopPanel === "session" ? "var(--text)" : "var(--text-muted)"; }}
               >
-                {t && t.input > 0 && (
+                {isMobile && (
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                    <circle cx="12" cy="12" r="10" /><line x1="12" y1="16" x2="12" y2="12" /><line x1="12" y1="8" x2="12.01" y2="8" />
+                  </svg>
+                )}
+                {!isMobile && t && t.input > 0 && (
                   <span style={{ display: "flex", alignItems: "center", gap: 4 }}>
                     <svg width="12" height="12" viewBox="0 0 10 10" fill="none" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round">
                       <line x1="5" y1="8.5" x2="5" y2="1.5" /><polyline points="2 4 5 1.5 8 4" />
@@ -622,7 +999,7 @@ export function AppShell() {
                     {fmt(t.input)}
                   </span>
                 )}
-                {t && t.output > 0 && (
+                {!isMobile && t && t.output > 0 && (
                   <span style={{ display: "flex", alignItems: "center", gap: 4 }}>
                     <svg width="12" height="12" viewBox="0 0 10 10" fill="none" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round">
                       <line x1="5" y1="1.5" x2="5" y2="8.5" /><polyline points="2 6 5 8.5 8 6" />
@@ -630,7 +1007,7 @@ export function AppShell() {
                     {fmt(t.output)}
                   </span>
                 )}
-                {t && t.cacheRead > 0 && (
+                {!isMobile && t && t.cacheRead > 0 && (
                   <span style={{ display: "flex", alignItems: "center", gap: 4 }}>
                     <svg width="12" height="12" viewBox="0 0 10 10" fill="none" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round">
                       <path d="M8.5 5a3.5 3.5 0 1 1-1-2.45" /><polyline points="6.5 1.5 8.5 2.5 7.5 4.5" />
@@ -638,7 +1015,7 @@ export function AppShell() {
                     {fmt(t.cacheRead)}
                   </span>
                 )}
-                {costStr && (
+                {!isMobile && costStr && (
                   <span style={{ display: "flex", alignItems: "center", color: "var(--text)", fontWeight: 500 }}>
                     {costStr}
                   </span>
@@ -651,7 +1028,7 @@ export function AppShell() {
                     {ctxStr}
                   </span>
                 )}
-              </div>
+              </button>
             );
           })()}
           {/* Top panel dropdown — shared, only one active at a time */}
@@ -661,6 +1038,8 @@ export function AppShell() {
               top: topPanelPos.top,
               left: topPanelPos.left,
               width: topPanelPos.width,
+              maxHeight: `calc(100dvh - ${topPanelPos.top}px)`,
+              overflowY: "auto",
               zIndex: 500,
             }}>
               {activeTopPanel === "system" && (
@@ -683,11 +1062,165 @@ export function AppShell() {
                     </div>
                   ) : systemPrompt === "" ? (
                     <div style={{ padding: "10px 16px", fontSize: 12, color: "var(--text-muted)", fontStyle: "italic" }}>
-                      {sh("systemPromptEmpty")}
+                      System prompt is empty (tools are disabled)
                     </div>
                   ) : (
                     <div style={{ padding: "10px 16px", fontSize: 12, color: "var(--text-muted)", fontStyle: "italic" }}>
-                      {sh("systemPromptWaiting")}
+                      Send a message to load the system prompt
+                    </div>
+                  )}
+                </div>
+              )}
+              {activeTopPanel === "session" && (
+                <div className="session-info-popover" style={{
+                  background: "var(--bg-panel)",
+                  borderBottom: "1px solid var(--border)",
+                  boxShadow: "0 10px 28px rgba(0,0,0,0.10)",
+                  padding: "12px 16px",
+                }}>
+                  {sessionStats ? (() => {
+                    const sessionRows = [
+                      ...(sessionStats.sessionName ? [{ label: "Name", value: sessionStats.sessionName, copyField: null }] : []),
+                      { label: "File", value: sessionStats.sessionFile ?? "In-memory", copyField: "file" as const },
+                      { label: "ID", value: sessionStats.sessionId, copyField: "id" as const },
+                    ];
+                    const messageRows = [
+                      ["User", sessionStats.userMessages.toLocaleString()],
+                      ["Assistant", sessionStats.assistantMessages.toLocaleString()],
+                      ["Tool Calls", sessionStats.toolCalls.toLocaleString()],
+                      ["Tool Results", sessionStats.toolResults.toLocaleString()],
+                      ["Total", sessionStats.totalMessages.toLocaleString()],
+                    ];
+                    const tokenRows = [
+                      ["Input", sessionStats.tokens.input.toLocaleString()],
+                      ["Output", sessionStats.tokens.output.toLocaleString()],
+                      ...(sessionStats.tokens.cacheRead > 0 ? [["Cache Read", sessionStats.tokens.cacheRead.toLocaleString()]] : []),
+                      ...(sessionStats.tokens.cacheWrite > 0 ? [["Cache Write", sessionStats.tokens.cacheWrite.toLocaleString()]] : []),
+                      ["Total", sessionStats.tokens.total.toLocaleString()],
+                    ];
+                    const ctx = contextUsage ?? sessionStats.contextUsage;
+                    const formatCompact = (n: number) => n >= 1_000_000 ? `${(n / 1_000_000).toFixed(1)}M` : n >= 1000 ? `${(n / 1000).toFixed(0)}k` : String(n);
+                    const extraTokenRows = [
+                      ...(sessionStats.cost > 0 ? [["Cost", `$${sessionStats.cost.toFixed(4)}`]] : []),
+                      ...(ctx?.contextWindow ? [["Context", `${ctx.percent !== null ? `${ctx.percent.toFixed(1)}%` : "?"} / ${formatCompact(ctx.contextWindow)}`]] : []),
+                    ];
+                    const section = (
+                      title: string,
+                      sectionRows: string[][],
+                      valueAlign: "left" | "right" = "left",
+                      compact = false,
+                    ) => (
+                        <div style={{ minWidth: 0 }}>
+                          <div style={{ fontSize: 11, fontWeight: 700, color: "var(--text)", marginBottom: 6 }}>{title}</div>
+                          <div style={{
+                            display: "grid",
+                            gridTemplateColumns: compact ? "max-content max-content" : "auto minmax(0, 1fr)",
+                            columnGap: compact ? 14 : 12,
+                            rowGap: 4,
+                            justifyContent: compact ? "start" : undefined,
+                          }}>
+                            {sectionRows.map(([label, value]) => (
+                              <div key={`${title}:${label}`} style={{ display: "contents" }}>
+                                <div style={{ color: "var(--text-dim)", whiteSpace: "nowrap" }}>{label}</div>
+                                <div style={{
+                                  color: "var(--text-muted)",
+                                  minWidth: 0,
+                                  overflowWrap: compact ? "normal" : "anywhere",
+                                  textAlign: valueAlign,
+                                  whiteSpace: valueAlign === "right" ? "nowrap" : "normal",
+                                }}>{value}</div>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      );
+                    const copyButton = (field: SessionCopyField, value: string) => {
+                      const copied = copiedSessionField === field;
+                      return (
+                        <button
+                          type="button"
+                          title={copied ? "Copied" : `Copy ${field === "file" ? "file path" : "session ID"}`}
+                          onClick={() => handleCopySessionField(field, value)}
+                          style={{
+                            alignSelf: "start",
+                            display: "inline-flex",
+                            alignItems: "center",
+                            justifyContent: "center",
+                            width: 22,
+                            height: 22,
+                            marginTop: -2,
+                            color: copied ? "var(--accent)" : "var(--text-dim)",
+                            background: "transparent",
+                            border: "1px solid var(--border)",
+                            borderRadius: 4,
+                            cursor: "pointer",
+                            flex: "0 0 auto",
+                            transition: "color 0.12s, border-color 0.12s, background 0.12s",
+                          }}
+                          onMouseEnter={(e) => {
+                            e.currentTarget.style.color = "var(--accent)";
+                            e.currentTarget.style.borderColor = "var(--accent)";
+                            e.currentTarget.style.background = "var(--bg-hover)";
+                          }}
+                          onMouseLeave={(e) => {
+                            e.currentTarget.style.color = copied ? "var(--accent)" : "var(--text-dim)";
+                            e.currentTarget.style.borderColor = "var(--border)";
+                            e.currentTarget.style.background = "transparent";
+                          }}
+                        >
+                          {copied ? (
+                            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                              <polyline points="20 6 9 17 4 12" />
+                            </svg>
+                          ) : (
+                            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                              <rect x="9" y="9" width="13" height="13" rx="2" ry="2" />
+                              <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" />
+                            </svg>
+                          )}
+                        </button>
+                      );
+                    };
+                    const sessionInfoSection = (
+                      <div style={{ minWidth: 0 }}>
+                        <div style={{ fontSize: 11, fontWeight: 700, color: "var(--text)", marginBottom: 6 }}>Session Info</div>
+                        <div style={{ display: "grid", gridTemplateColumns: "auto minmax(0, 1fr) auto", columnGap: 12, rowGap: 8, alignItems: "start" }}>
+                          {sessionRows.map((row) => (
+                            <div key={`session-info:${row.label}`} style={{ display: "contents" }}>
+                              <div style={{ color: "var(--text-dim)", whiteSpace: "nowrap" }}>{row.label}</div>
+                              <div style={{
+                                color: "var(--text-muted)",
+                                minWidth: 0,
+                                overflowWrap: "anywhere",
+                                wordBreak: "break-word",
+                                whiteSpace: "normal",
+                              }}>{row.value}</div>
+                              <div>{row.copyField ? copyButton(row.copyField, row.value) : null}</div>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    );
+
+                    return (
+                      <div style={{
+                        display: "grid",
+                        gridTemplateColumns: isMobile
+                          ? "1fr"
+                          : "minmax(360px, 1.7fr) minmax(140px, 0.55fr) minmax(190px, 0.75fr)",
+                        gap: isMobile ? 16 : 24,
+                        fontSize: 12,
+                        lineHeight: 1.5,
+                        fontFamily: "var(--font-mono)",
+                      }}>
+                        {sessionInfoSection}
+                        {section("Messages", messageRows)}
+                        {section("Tokens", [...tokenRows, ...extraTokenRows], "right", true)}
+                      </div>
+                    );
+                  })() : (
+                    <div style={{ fontSize: 12, color: "var(--text-muted)", fontStyle: "italic" }}>
+                      Send a message or run /session to load session info
                     </div>
                   )}
                 </div>
@@ -712,13 +1245,35 @@ export function AppShell() {
               onBranchDataChange={handleBranchDataChange}
               onSystemPromptChange={handleSystemPromptChange}
               onSessionStatsChange={handleSessionStatsChange}
+              onSessionStatsPanelOpen={openSessionStatsPanel}
               onContextUsageChange={handleContextUsageChange}
               onOpenFile={handleOpenLinkedFile}
             />
+          ) : initialCwdStatus === "validating" ? (
+            <div
+              role="status"
+              style={{ height: "100%", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 8, padding: 24, color: "var(--text-muted)", textAlign: "center" }}
+            >
+              <div style={{ fontSize: 14, color: "var(--text)" }}>Opening workspace...</div>
+              <div style={{ maxWidth: "min(720px, 100%)", overflowWrap: "anywhere", fontFamily: "var(--font-mono)", fontSize: 12 }}>
+                {initialNavigation.requestedCwd}
+              </div>
+            </div>
+          ) : initialCwdStatus === "error" ? (
+            <div
+              role="alert"
+              style={{ height: "100%", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 8, padding: 24, color: "var(--text-muted)", textAlign: "center" }}
+            >
+              <div style={{ fontSize: 14, color: "#dc2626" }}>Unable to open workspace</div>
+              <div style={{ maxWidth: "min(720px, 100%)", overflowWrap: "anywhere", fontFamily: "var(--font-mono)", fontSize: 12 }}>
+                {initialNavigation.requestedCwd}
+              </div>
+              <div style={{ maxWidth: 720, fontSize: 12 }}>{initialCwdError}</div>
+            </div>
           ) : showPlaceholder ? (
             activeCwd ? (
               <div style={{ height: "100%", display: "flex", alignItems: "center", justifyContent: "center", color: "var(--text-muted)", fontSize: 15 }}>
-                {sh("selectSession")}
+                Select a session from the sidebar
               </div>
             ) : (
               <div style={{ position: "absolute", top: 12, left: 12, display: "flex", alignItems: "flex-start", gap: 8, userSelect: "none", pointerEvents: "none" }}>
@@ -726,10 +1281,10 @@ export function AppShell() {
                   <line x1="20" y1="12" x2="4" y2="12" /><polyline points="10 6 4 12 10 18" />
                 </svg>
                 <div>
-                  <div style={{ fontSize: 18, fontWeight: 600, color: "var(--text)", marginBottom: 8 }}>{sh("getStarted")}</div>
+                  <div style={{ fontSize: 18, fontWeight: 600, color: "var(--text)", marginBottom: 8 }}>Get Started</div>
                   <div style={{ fontSize: 12, color: "var(--text-muted)", lineHeight: 1.8 }}>
-                    <span style={{ color: "var(--text-dim)", marginRight: 6 }}>1.</span>{sh("step1")}<br />
-                    <span style={{ color: "var(--text-dim)", marginRight: 6 }}>2.</span>{sh("step2")} <strong style={{ color: "var(--text)" }}>{sh("models")}</strong> {sh("step2b")}
+                    <span style={{ color: "var(--text-dim)", marginRight: 6 }}>1.</span>Select a project directory from the sidebar<br />
+                    <span style={{ color: "var(--text-dim)", marginRight: 6 }}>2.</span>Add models via the <strong style={{ color: "var(--text)" }}>Models</strong> button at the bottom
                   </div>
                 </div>
               </div>
@@ -764,10 +1319,21 @@ export function AppShell() {
         {/* File content */}
         <div style={{ flex: 1, overflow: "hidden" }}>
           {activeFileTab?.filePath ? (
-            <FileViewer filePath={activeFileTab.filePath} cwd={activeFileTab.cwd ?? activeCwd ?? undefined} sourceSessionId={activeFileTab.sourceSessionId} />
+            <FileViewer
+              filePath={activeFileTab.filePath}
+              cwd={activeCwd ?? undefined}
+              sourceSessionId={activeFileTab.sourceSessionId}
+              gitRefreshKey={explorerRefreshKey}
+              onMentionLines={rightPanelOpen ? handleFileLineMention : undefined}
+              onOpenFile={(filePath) => handleOpenFile(
+                filePath,
+                getFileName(filePath),
+                activeFileTab.sourceSessionId,
+              )}
+            />
           ) : (
             <div style={{ height: "100%", display: "flex", alignItems: "center", justifyContent: "center", color: "var(--text-dim)", fontSize: 12 }}>
-              {sh("noFileOpen")}
+              No file open
             </div>
           )}
         </div>
@@ -776,7 +1342,8 @@ export function AppShell() {
     {/* File panel toggle — always visible at top-right */}
     <button
       onClick={() => setRightPanelOpen((v) => !v)}
-      title={rightPanelOpen ? sh("filePanelHide") : sh("filePanelShow")}
+      title={rightPanelOpen ? "Hide file panel" : "Show file panel"}
+      aria-label={rightPanelOpen ? "Hide file panel" : "Show file panel"}
       style={{
         position: "fixed", top: 0, right: 0, zIndex: 300,
         display: "flex", alignItems: "center", justifyContent: "center",
@@ -795,6 +1362,14 @@ export function AppShell() {
     {modelsConfigOpen && <ModelsConfig onClose={() => { setModelsConfigOpen(false); setModelsRefreshKey((k) => k + 1); }} />}
     {skillsConfigOpen && (activeCwd ?? selectedSession?.cwd ?? newSessionCwd) && (
       <SkillsConfig cwd={(activeCwd ?? selectedSession?.cwd ?? newSessionCwd)!} onClose={() => setSkillsConfigOpen(false)} />
+    )}
+    {pluginsConfigOpen && (activeCwd ?? selectedSession?.cwd ?? newSessionCwd) && (
+      <PluginsConfig
+        cwd={(activeCwd ?? selectedSession?.cwd ?? newSessionCwd)!}
+        sessionId={selectedSession?.id ?? null}
+        onClose={() => setPluginsConfigOpen(false)}
+        onReloaded={() => setSessionKey((k) => k + 1)}
+      />
     )}
     </>
   );

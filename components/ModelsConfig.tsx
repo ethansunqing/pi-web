@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect, useCallback, useRef } from "react";
-import { useTranslations } from "next-intl";
+import { useIsMobile } from "@/hooks/useIsMobile";
 import FetchModelsDialog from "@/components/FetchModelsDialog";
 // Color icons (have their own fill colors — no background needed)
 import AnthropicIcon from "@lobehub/icons/es/Anthropic/components/Mono";
@@ -22,9 +22,6 @@ import VercelIcon from "@lobehub/icons/es/Vercel/components/Mono";
 import GithubCopilotIcon from "@lobehub/icons/es/GithubCopilot/components/Mono";
 import AwsColorIcon from "@lobehub/icons/es/Aws/components/Color";
 import AzureColorIcon from "@lobehub/icons/es/Azure/components/Color";
-// Kimi icon removed: @lobehub/icons@5.10.0 has no Kimi subpackage.
-// Reuse Moonshot (same vendor — Moonshot AI / 月之暗面) Mono icon as the fallback.
-const KimiColorIcon = MoonshotIcon;
 import QwenColorIcon from "@lobehub/icons/es/Qwen/components/Color";
 import ZhipuColorIcon from "@lobehub/icons/es/Zhipu/components/Color";
 import CohereColorIcon from "@lobehub/icons/es/Cohere/components/Color";
@@ -36,6 +33,10 @@ import NvidiaColorIcon from "@lobehub/icons/es/Nvidia/components/Color";
 import OpenCodeIcon from "@lobehub/icons/es/OpenCode/components/Mono";
 import XiaomiMiMoIcon from "@lobehub/icons/es/XiaomiMiMo/components/Mono";
 import ZAIIcon from "@lobehub/icons/es/ZAI/components/Mono";
+
+// Kimi icon removed: @lobehub/icons has no Kimi subpackage.
+// Reuse Moonshot (same vendor) Mono icon as the fallback.
+const KimiColorIcon = MoonshotIcon;
 
 type IconComponent = React.ComponentType<{ size?: number | string; style?: React.CSSProperties }>;
 
@@ -201,7 +202,6 @@ function SecretTextInput({
   spellCheck?: boolean;
   style?: React.CSSProperties;
 }) {
-  const svt = useTranslations("models");
   const [visible, setVisible] = useState(false);
 
   useEffect(() => {
@@ -223,8 +223,8 @@ function SecretTextInput({
       <button
         type="button"
         onClick={() => setVisible((v) => !v)}
-        aria-label={visible ? svt("hideApiKey") : svt("showApiKey")}
-        title={visible ? svt("hideApiKey") : svt("showApiKey")}
+        aria-label={visible ? "Hide API key" : "Show API key"}
+        title={visible ? "Hide API key" : "Show API key"}
         style={{
           position: "absolute",
           right: 5,
@@ -265,11 +265,10 @@ function NumInput({ value, onChange, placeholder }: { value: string; onChange: (
 }
 
 function Select({ value, onChange, options, required }: { value: string; onChange: (v: string) => void; options: readonly string[]; required?: boolean }) {
-  const st = useTranslations("models");
   return (
     <select value={value} onChange={(e) => onChange(e.target.value)}
       style={{ ...inputStyle, color: value ? "var(--text)" : "var(--text-dim)" }}>
-      {!required && <option value="">{st("inheritNone")}</option>}
+      {!required && <option value="">— inherit / none —</option>}
       {options.map((o) => <option key={o} value={o}>{o}</option>)}
     </select>
   );
@@ -296,7 +295,6 @@ function ProviderDetail({ name, provider, onChange, onRename, onDelete, onReques
   onChange: (p: ProviderEntry) => void; onRename: (n: string) => void; onDelete: () => void;
   onRequestFetchModels: () => void;
 }) {
-  const pt = useTranslations("models");
   const [editingName, setEditingName] = useState(name);
   useEffect(() => setEditingName(name), [name]);
   const set = <K extends keyof ProviderEntry>(k: K, v: ProviderEntry[K]) => onChange({ ...provider, [k]: v });
@@ -309,78 +307,48 @@ function ProviderDetail({ name, provider, onChange, onRename, onDelete, onReques
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-        <SectionTitle>{pt("provider")}</SectionTitle>
+        <SectionTitle>Provider</SectionTitle>
         <button onClick={onDelete}
           style={{ padding: "3px 8px", background: "none", border: "1px solid rgba(239,68,68,0.3)", borderRadius: 4, color: "#ef4444", cursor: "pointer", fontSize: 11 }}>
-          {pt("delete")}
+          Delete
         </button>
       </div>
 
-      <Field label={pt("providerName")}>
+      <Field label="Provider name">
         <TextInput value={editingName} onChange={setEditingName} placeholder="provider-name" mono />
         {editingName !== name && editingName.trim() && (
           <button onClick={() => onRename(editingName.trim())}
             style={{ marginTop: 4, padding: "3px 10px", background: "var(--accent)", border: "none", borderRadius: 4, color: "#fff", cursor: "pointer", fontSize: 11, alignSelf: "flex-start" }}>
-            {pt("rename")}
+            Rename
           </button>
         )}
       </Field>
+      <FetchModelsRow provider={provider} onClick={onRequestFetchModels} />
 
-      <Field label={pt("baseUrl")}>
+
+      <Field label="Base URL">
         <TextInput value={provider.baseUrl ?? ""} onChange={(v) => set("baseUrl", v || undefined)}
           placeholder="https://api.example.com/v1" mono />
       </Field>
 
       <Field label="API Key">
         <SecretTextInput value={provider.apiKey ?? ""} onChange={(v) => set("apiKey", v || undefined)}
-          placeholder={pt("apiKeyHelp")} mono />
+          placeholder="ENV_VAR_NAME, !shell-command, or literal key" mono />
         <span style={{ fontSize: 10, color: "var(--text-dim)", marginTop: 2 }}>
-          {pt("apiKeyHelp")}
+          Prefix with <code style={{ fontFamily: "var(--font-mono)" }}>!</code> to run a shell command, or use an env var name
         </span>
       </Field>
 
-      <Field label={pt("api")}>
+      <Field label="API">
         <Select value={provider.api ?? "openai-completions"} onChange={(v) => set("api", v)} options={API_OPTIONS} required />
       </Field>
-
-      <FetchModelsRow provider={provider} onClick={onRequestFetchModels} />
-    </div>
-  );
-}
-
-// ── Fetch models row (inside ProviderDetail) ──────────────────────────────────
-
-function FetchModelsRow({ provider, onClick }: { provider: ProviderEntry; onClick: () => void }) {
-  const ft = useTranslations("models");
-  const baseUrl = (provider.baseUrl ?? "").trim();
-  const disabled = baseUrl.length === 0;
-  return (
-    <div style={{ display: "flex", flexDirection: "column", gap: 4, marginTop: 4 }}>
-      <button
-        onClick={onClick}
-        disabled={disabled}
-        style={{
-          alignSelf: "flex-start",
-          padding: "6px 12px",
-          border: `1px solid ${disabled ? "var(--border)" : "var(--accent)"}`,
-          borderRadius: 6,
-          background: "none",
-          color: disabled ? "var(--text-dim)" : "var(--accent)",
-          cursor: disabled ? "not-allowed" : "pointer",
-          fontSize: 12,
-          fontWeight: 600,
-        }}
-      >
-        {ft("fetchModels")}
-      </button>
-      {disabled && <span style={{ fontSize: 10, color: "var(--text-dim)" }}>{ft("fetchNoBaseUrl")}</span>}
     </div>
   );
 }
 
 // ── ThinkingLevelMap editor ───────────────────────────────────────────────────
 
-const THINKING_LEVELS = ["off", "minimal", "low", "medium", "high", "xhigh"] as const;
+const THINKING_LEVELS = ["off", "minimal", "low", "medium", "high", "xhigh", "max"] as const;
 type ThinkingLevel = typeof THINKING_LEVELS[number];
 
 const LEVEL_COLORS: Record<ThinkingLevel, string> = {
@@ -390,6 +358,7 @@ const LEVEL_COLORS: Record<ThinkingLevel, string> = {
   medium:  "#a78bfa",
   high:    "#f472b6",
   xhigh:   "#fb923c",
+  max:     "#ef4444",
 };
 
 function ThinkingLevelMapEditor({
@@ -399,7 +368,6 @@ function ThinkingLevelMapEditor({
   value: Record<string, string | null> | undefined;
   onChange: (v: Record<string, string | null> | undefined) => void;
 }) {
-  const lt = useTranslations("models");
   const map = value ?? {};
 
   const setLevel = (level: ThinkingLevel, entry: string | null | "omit") => {
@@ -475,13 +443,13 @@ function ThinkingLevelMapEditor({
                 onClick={() => setLevel(level, "omit")}
                 style={{ ...btnBase, ...(state === "omit" ? btnActive : {}) }}
               >
-                {lt("default")}
+                Default
               </button>
               <button
                 onClick={() => setLevel(level, null)}
                 style={{ ...btnBase, borderLeft: "1px solid var(--border)", ...(state === "null" ? btnActiveDisabled : {}) }}
               >
-                {lt("disabled")}
+                Disabled
               </button>
             </div>
 
@@ -491,7 +459,7 @@ function ThinkingLevelMapEditor({
                 onClick={() => setLevel(level, strVal || level)}
                 style={{ ...btnBase, ...(state === "string" ? btnActive : {}), borderRight: "1px solid var(--border)", flexShrink: 0 }}
               >
-                {lt("custom")}
+                Custom
               </button>
               <input
                 value={strVal}
@@ -554,7 +522,6 @@ function ModelDetail({
   onChange: (m: ModelEntry) => void;
   onDelete: () => void;
 }) {
-  const mdt = useTranslations("models");
   const [testState, setTestState] = useState<ModelTestState>({ phase: "idle" });
   const set = <K extends keyof ModelEntry>(k: K, v: ModelEntry[K]) => onChange({ ...model, [k]: v });
   const costVal = (k: keyof NonNullable<ModelEntry["cost"]>) => model.cost?.[k] !== undefined ? String(model.cost[k]) : "";
@@ -564,15 +531,15 @@ function ModelDetail({
   };
   const testSummary = (() => {
     if (testState.phase === "idle") return null;
-    if (testState.phase === "testing") return mdt("testingConnection");
+    if (testState.phase === "testing") return "Testing model connection...";
     const meta = [
       testState.latencyMs !== undefined ? `${testState.latencyMs}ms` : null,
       testState.status !== undefined ? `HTTP ${testState.status}` : null,
     ].filter(Boolean);
     if (testState.phase === "success") {
-      return [mdt("connected"), ...meta, testState.responseText || null].filter(Boolean).join(" · ");
+      return ["Connected", ...meta, testState.responseText || null].filter(Boolean).join(" · ");
     }
-    return [mdt("failed"), ...meta, testState.message].filter(Boolean).join(" · ");
+    return ["Failed", ...meta, testState.message].filter(Boolean).join(" · ");
   })();
 
   useEffect(() => {
@@ -618,7 +585,7 @@ function ModelDetail({
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-        <SectionTitle>{mdt("model")}</SectionTitle>
+        <SectionTitle>Model</SectionTitle>
         <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
           {testSummary && (
             <span
@@ -646,7 +613,7 @@ function ModelDetail({
           <button
             onClick={handleTest}
             disabled={!model.id.trim() || testState.phase === "testing"}
-            title={mdt("testConnection")}
+            title="Test model connection"
             style={{
               height: 24,
               padding: "0 8px",
@@ -668,46 +635,46 @@ function ModelDetail({
                 <polyline points="20 6 9 17 4 12" />
               </svg>
             )}
-            {testState.phase === "testing" ? mdt("testing") : testState.phase === "success" ? mdt("ok") : mdt("test")}
+            {testState.phase === "testing" ? "Testing…" : testState.phase === "success" ? "OK" : "Test"}
           </button>
           <button onClick={onDelete}
             style={{ height: 24, padding: "0 8px", background: "none", border: "1px solid rgba(239,68,68,0.3)", borderRadius: 4, color: "#ef4444", cursor: "pointer", fontSize: 11, boxSizing: "border-box" }}>
-            {mdt("remove")}
+            Remove
           </button>
         </div>
       </div>
 
       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
-        <Field label={mdt("modelIdLabel")}><TextInput value={model.id} onChange={(v) => set("id", v)} placeholder="model-id" mono /></Field>
-        <Field label={mdt("modelName")}><TextInput value={model.name ?? ""} onChange={(v) => set("name", v || undefined)} placeholder={mdt("displayNamePlaceholder")} /></Field>
+        <Field label="ID *"><TextInput value={model.id} onChange={(v) => set("id", v)} placeholder="model-id" mono /></Field>
+        <Field label="Name"><TextInput value={model.name ?? ""} onChange={(v) => set("name", v || undefined)} placeholder="Display name" /></Field>
       </div>
 
-      <Field label={mdt("apiOverride")}>
+      <Field label="API override">
         <Select value={model.api ?? ""} onChange={(v) => set("api", v || undefined)} options={API_OPTIONS} />
       </Field>
 
       <div style={{ display: "flex", gap: 20, flexWrap: "wrap" }}>
-        <Check label={mdt("reasoning")} checked={model.reasoning ?? false} onChange={(v) => set("reasoning", v || undefined)} />
-        <Check label={mdt("imageInput")} checked={model.input?.includes("image") ?? false}
+        <Check label="Reasoning / thinking" checked={model.reasoning ?? false} onChange={(v) => set("reasoning", v || undefined)} />
+        <Check label="Image input" checked={model.input?.includes("image") ?? false}
           onChange={(v) => set("input", v ? ["text", "image"] : undefined)} />
       </div>
 
       {model.reasoning && (
         <>
           <Check
-            label={mdt("deepseekThinking")}
+            label="DeepSeek thinking compat"
             checked={hasDeepseekCompat(model)}
             onChange={(v) => onChange(setDeepseekCompat(model, v))}
           />
           <div>
             <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 8 }}>
-              <SectionTitle>{mdt("thinkingLevelMap")}</SectionTitle>
+              <SectionTitle>Thinking level map</SectionTitle>
               {model.thinkingLevelMap && (
                 <button
                   onClick={() => set("thinkingLevelMap", undefined)}
                   style={{ fontSize: 10, padding: "2px 7px", background: "none", border: "1px solid var(--border)", borderRadius: 4, color: "var(--text-dim)", cursor: "pointer" }}
                 >
-                  {mdt("clearAll")}
+                  clear all
                 </button>
               )}
             </div>
@@ -720,18 +687,18 @@ function ModelDetail({
       )}
 
       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
-        <Field label={mdt("contextWindow")}>
+        <Field label="Context window (tokens)">
           <NumInput value={model.contextWindow !== undefined ? String(model.contextWindow) : ""}
             onChange={(v) => set("contextWindow", v ? parseInt(v) : undefined)} placeholder="128000" />
         </Field>
-        <Field label={mdt("maxOutputTokens")}>
+        <Field label="Max output tokens">
           <NumInput value={model.maxTokens !== undefined ? String(model.maxTokens) : ""}
             onChange={(v) => set("maxTokens", v ? parseInt(v) : undefined)} placeholder="16384" />
         </Field>
       </div>
 
       <div>
-        <SectionTitle>{mdt("costPerMillion")}</SectionTitle>
+        <SectionTitle>Cost (per million tokens)</SectionTitle>
         <div style={{ marginTop: 8, display: "grid", gridTemplateColumns: "1fr 1fr 1fr 1fr", gap: 8 }}>
           {(["input", "output", "cacheRead", "cacheWrite"] as const).map((k) => (
             <Field key={k} label={k}>
@@ -747,7 +714,6 @@ function ModelDetail({
 // ── OAuth detail ──────────────────────────────────────────────────────────────
 
 function OAuthDetail({ provider, onRefresh }: { provider: OAuthProvider; onRefresh: () => void }) {
-  const ot = useTranslations("models");
   const [loginState, setLoginState] = useState<OAuthLoginState>({ phase: "idle" });
   const [inputValue, setInputValue] = useState("");
   const eventSourceRef = useRef<EventSource | null>(null);
@@ -818,9 +784,9 @@ function OAuthDetail({ provider, onRefresh }: { provider: OAuthProvider; onRefre
     };
     es.onerror = () => {
       es.close();
-      setLoginState((prev) => prev.phase === "success" ? prev : { phase: "error", message: ot("connectionLost") });
+      setLoginState((prev) => prev.phase === "success" ? prev : { phase: "error", message: "Connection lost" });
     };
-  }, [provider.id, onRefresh, ot]);
+  }, [provider.id, onRefresh]);
 
   const handleLogout = useCallback(async () => {
     await fetch(`/api/auth/logout/${encodeURIComponent(provider.id)}`, { method: "POST" });
@@ -830,7 +796,7 @@ function OAuthDetail({ provider, onRefresh }: { provider: OAuthProvider; onRefre
 
   const submitCode = useCallback(async (token: string, code: string) => {
     if (!code.trim()) return;
-    setLoginState({ phase: "progress", message: ot("verifying") });
+    setLoginState({ phase: "progress", message: "Verifying…" });
     try {
       const res = await fetch(`/api/auth/login/${encodeURIComponent(provider.id)}`, {
         method: "POST",
@@ -839,18 +805,18 @@ function OAuthDetail({ provider, onRefresh }: { provider: OAuthProvider; onRefre
       });
       if (!res.ok) {
         const d = await res.json().catch(() => ({})) as { error?: string };
-        setLoginState({ phase: "error", message: d.error ?? ot("serverError", { status: res.status }) });
+        setLoginState({ phase: "error", message: d.error ?? `Server error ${res.status}` });
         return;
       }
       setInputValue("");
       // Success path: SSE stream will emit "success" and update state
     } catch (e) {
-      setLoginState({ phase: "error", message: e instanceof Error ? e.message : ot("networkError") });
+      setLoginState({ phase: "error", message: e instanceof Error ? e.message : "Network error" });
     }
-  }, [provider.id, ot]);
+  }, [provider.id]);
 
   const submitSelection = useCallback(async (token: string, value: string) => {
-    setLoginState({ phase: "progress", message: ot("continuing") });
+    setLoginState({ phase: "progress", message: "Continuing…" });
     try {
       const res = await fetch(`/api/auth/login/${encodeURIComponent(provider.id)}`, {
         method: "POST",
@@ -859,12 +825,12 @@ function OAuthDetail({ provider, onRefresh }: { provider: OAuthProvider; onRefre
       });
       if (!res.ok) {
         const d = await res.json().catch(() => ({})) as { error?: string };
-        setLoginState({ phase: "error", message: d.error ?? ot("serverError", { status: res.status }) });
+        setLoginState({ phase: "error", message: d.error ?? `Server error ${res.status}` });
       }
     } catch (e) {
-      setLoginState({ phase: "error", message: e instanceof Error ? e.message : ot("networkError") });
+      setLoginState({ phase: "error", message: e instanceof Error ? e.message : "Network error" });
     }
-  }, [provider.id, ot]);
+  }, [provider.id]);
 
   const isWorking = loginState.phase === "connecting" || loginState.phase === "progress" ||
     loginState.phase === "auth" || loginState.phase === "device_code" ||
@@ -873,11 +839,11 @@ function OAuthDetail({ provider, onRefresh }: { provider: OAuthProvider; onRefre
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-        <SectionTitle>{ot("subscription")}</SectionTitle>
+        <SectionTitle>Subscription</SectionTitle>
         <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
           <span style={{ width: 7, height: 7, borderRadius: "50%", background: provider.loggedIn ? "#4ade80" : "var(--border)", display: "inline-block" }} />
           <span style={{ fontSize: 11, color: provider.loggedIn ? "#4ade80" : "var(--text-dim)" }}>
-            {provider.loggedIn ? ot("statusConnected") : ot("statusNotConnected")}
+            {provider.loggedIn ? "connected" : "not connected"}
           </span>
         </div>
       </div>
@@ -886,11 +852,11 @@ function OAuthDetail({ provider, onRefresh }: { provider: OAuthProvider; onRefre
       <div style={{ minHeight: 48 }}>
         {loginState.phase === "idle" && (
           <p style={{ margin: 0, fontSize: 12, color: "var(--text-muted)", lineHeight: 1.5 }}>
-            {provider.loggedIn ? ot("alreadyConnected") : ot("connectAccount", { name: provider.name })}
+            {provider.loggedIn ? "Already connected. You can re-login or disconnect." : `Connect your ${provider.name} account.`}
           </p>
         )}
         {loginState.phase === "connecting" && (
-          <p style={{ margin: 0, fontSize: 12, color: "var(--text-muted)" }}>{ot("openingBrowser")}</p>
+          <p style={{ margin: 0, fontSize: 12, color: "var(--text-muted)" }}>Opening browser…</p>
         )}
         {loginState.phase === "select" && (
           <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
@@ -914,14 +880,14 @@ function OAuthDetail({ provider, onRefresh }: { provider: OAuthProvider; onRefre
           <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
             <p style={{ margin: 0, fontSize: 12, color: "var(--text-muted)", lineHeight: 1.5 }}>
               {loginState.phase === "auth"
-                ? ot("authInstructions")
+                ? "Complete sign-in in the browser, then copy the redirect URL from the address bar and paste it below."
                 : loginState.message}
             </p>
             {loginState.phase === "auth" && (
               <p style={{ margin: 0, fontSize: 11, color: "var(--text-dim)", lineHeight: 1.5 }}>
-                {ot("browserNotOpened")}{" "}
+                If the browser window did not open,{" "}
                 <a href={loginState.url} target="_blank" rel="noopener noreferrer" style={{ color: "var(--accent)", wordBreak: "break-all" }}>
-                  {ot("clickHereLogin")}
+                  click here to open the login page
                 </a>
                 .
               </p>
@@ -932,7 +898,7 @@ function OAuthDetail({ provider, onRefresh }: { provider: OAuthProvider; onRefre
                 value={inputValue}
                 onChange={(e) => setInputValue(e.target.value)}
                 onKeyDown={(e) => { if (e.key === "Enter") submitCode(loginState.token, inputValue); }}
-                placeholder={loginState.phase === "auth" ? "http://localhost:1455/auth/callback?code=…" : (loginState.placeholder ?? ot("enterValue"))}
+                placeholder={loginState.phase === "auth" ? "http://localhost:1455/auth/callback?code=…" : (loginState.placeholder ?? "Enter value…")}
                 style={{ flex: 1, padding: "6px 9px", background: "var(--bg)", border: "1px solid var(--border)", borderRadius: 5, color: "var(--text)", fontSize: 12, outline: "none", fontFamily: "var(--font-mono)", boxSizing: "border-box" }}
               />
               <button
@@ -940,7 +906,7 @@ function OAuthDetail({ provider, onRefresh }: { provider: OAuthProvider; onRefre
                 disabled={!inputValue.trim()}
                 style={{ padding: "6px 12px", background: inputValue.trim() ? "var(--accent)" : "var(--bg-panel)", border: "none", borderRadius: 5, color: inputValue.trim() ? "#fff" : "var(--text-dim)", cursor: inputValue.trim() ? "pointer" : "not-allowed", fontSize: 12, fontWeight: 600, flexShrink: 0 }}
               >
-                {ot("submit")}
+                Submit
               </button>
             </div>
           </div>
@@ -948,7 +914,7 @@ function OAuthDetail({ provider, onRefresh }: { provider: OAuthProvider; onRefre
         {loginState.phase === "device_code" && (
           <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
             <p style={{ margin: 0, fontSize: 12, color: "var(--text-muted)", lineHeight: 1.5 }}>
-              {ot("deviceCodeInstructions")}
+              Open the verification page and enter this code:
             </p>
             <div style={{ padding: "8px 10px", background: "var(--bg)", border: "1px solid var(--border)", borderRadius: 5, color: "var(--text)", fontSize: 16, fontWeight: 700, fontFamily: "var(--font-mono)", letterSpacing: 0 }}>
               {loginState.userCode}
@@ -957,7 +923,7 @@ function OAuthDetail({ provider, onRefresh }: { provider: OAuthProvider; onRefre
               <a href={loginState.verificationUri} target="_blank" rel="noopener noreferrer" style={{ color: "var(--accent)", wordBreak: "break-all" }}>
                 {loginState.verificationUri}
               </a>
-              {loginState.expiresInSeconds ? ` ${ot("expiresIn", { minutes: Math.ceil(loginState.expiresInSeconds / 60) })}` : ""}
+              {loginState.expiresInSeconds ? ` Expires in ${Math.ceil(loginState.expiresInSeconds / 60)} minutes.` : ""}
             </p>
           </div>
         )}
@@ -965,7 +931,7 @@ function OAuthDetail({ provider, onRefresh }: { provider: OAuthProvider; onRefre
           <p style={{ margin: 0, fontSize: 12, color: "var(--text-muted)" }}>{loginState.message}</p>
         )}
         {loginState.phase === "success" && (
-          <p style={{ margin: 0, fontSize: 12, color: "#4ade80" }}>{ot("connectedSuccessfully")}</p>
+          <p style={{ margin: 0, fontSize: 12, color: "#4ade80" }}>Connected successfully.</p>
         )}
         {loginState.phase === "error" && (
           <p style={{ margin: 0, fontSize: 12, color: "#f87171" }}>{loginState.message}</p>
@@ -987,14 +953,14 @@ function OAuthDetail({ provider, onRefresh }: { provider: OAuthProvider; onRefre
               onClick={handleLogin}
               style={{ padding: "5px 14px", background: "var(--accent)", border: "none", borderRadius: 5, color: "#fff", cursor: "pointer", fontSize: 12, fontWeight: 600 }}
             >
-              {provider.loggedIn ? ot("relogin") : ot("login")}
+              {provider.loggedIn ? "Re-login" : "Login"}
             </button>
             {provider.loggedIn && (
               <button
                 onClick={handleLogout}
                 style={{ padding: "5px 12px", background: "none", border: "1px solid rgba(239,68,68,0.3)", borderRadius: 5, color: "#ef4444", cursor: "pointer", fontSize: 12 }}
               >
-                {ot("disconnect")}
+                Disconnect
               </button>
             )}
           </>
@@ -1007,7 +973,6 @@ function OAuthDetail({ provider, onRefresh }: { provider: OAuthProvider; onRefre
 // ── API Key detail ────────────────────────────────────────────────────────────
 
 function ApiKeyDetail({ provider, onRefresh }: { provider: ApiKeyProvider; onRefresh: () => void }) {
-  const akt = useTranslations("models");
   const [apiKey, setApiKey] = useState("");
   const [saving, setSaving] = useState(false);
   const [removing, setRemoving] = useState(false);
@@ -1066,19 +1031,19 @@ function ApiKeyDetail({ provider, onRefresh }: { provider: ApiKeyProvider; onRef
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-        <SectionTitle>{akt("apiKey")}</SectionTitle>
+        <SectionTitle>API Key</SectionTitle>
         <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
           <span style={{ width: 7, height: 7, borderRadius: "50%", background: provider.configured ? "#4ade80" : "var(--border)", display: "inline-block" }} />
           <span style={{ fontSize: 11, color: provider.configured ? "#4ade80" : "var(--text-dim)" }}>
-            {provider.configured ? akt("statusConfigured") : akt("statusNotConfigured")}
+            {provider.configured ? "configured" : "not configured"}
           </span>
         </div>
       </div>
 
       <p style={{ margin: 0, fontSize: 12, color: "var(--text-muted)", lineHeight: 1.5 }}>
         {provider.configured
-          ? akt("apiKeyStored")
-          : akt("enterApiKey", { displayName: provider.displayName, count: provider.modelCount })}
+          ? `API key is stored. Enter a new key below to replace it, or disconnect to remove it.`
+          : `Enter your ${provider.displayName} API key to enable ${provider.modelCount} model${provider.modelCount !== 1 ? "s" : ""}.`}
       </p>
 
       <Field label="API Key">
@@ -1087,7 +1052,7 @@ function ApiKeyDetail({ provider, onRefresh }: { provider: ApiKeyProvider; onRef
             value={apiKey}
             onChange={setApiKey}
             onKeyDown={(e) => { if (e.key === "Enter" && apiKey.trim()) handleSave(); }}
-            placeholder={provider.configured ? akt("enterNewKey") : "sk-…"}
+            placeholder={provider.configured ? "Enter new key to replace…" : "sk-…"}
             style={{ flex: 1 }}
             autoComplete="off"
             spellCheck={false}
@@ -1111,7 +1076,7 @@ function ApiKeyDetail({ provider, onRefresh }: { provider: ApiKeyProvider; onRef
                 <polyline points="20 6 9 17 4 12" />
               </svg>
             )}
-            {savedOk ? akt("saved") : saving ? akt("saving") : akt("save")}
+            {savedOk ? "Saved" : saving ? "Saving…" : "Save"}
           </button>
         </div>
       </Field>
@@ -1129,7 +1094,7 @@ function ApiKeyDetail({ provider, onRefresh }: { provider: ApiKeyProvider; onRef
             cursor: removing ? "not-allowed" : "pointer", fontSize: 12,
           }}
         >
-          {removing ? akt("removing") : akt("disconnect")}
+          {removing ? "Removing…" : "Disconnect"}
         </button>
       )}
     </div>
@@ -1191,7 +1156,6 @@ function AddProviderPicker({
   oauthProviders, apiKeyProviders,
   onSelectOAuth, onSelectApiKey, onAddCustom, onClose,
 }: AddProviderPickerProps) {
-  const ap = useTranslations("models");
   const [search, setSearch] = useState("");
   const inputRef = useRef<HTMLInputElement>(null);
 
@@ -1237,7 +1201,7 @@ function AddProviderPicker({
             value={search}
             onChange={(e) => setSearch(e.target.value)}
             onKeyDown={(e) => { if (e.key === "Escape") onClose(); }}
-            placeholder={ap("searchProviders")}
+            placeholder="Search providers…"
             style={{ flex: 1, background: "none", border: "none", outline: "none", color: "var(--text)", fontSize: 13, boxSizing: "border-box" }}
           />
         </div>
@@ -1245,11 +1209,11 @@ function AddProviderPicker({
         {/* Card grid */}
         <div style={{ flex: 1, overflowY: "auto", padding: 14 }}>
           {totalCount === 0 ? (
-            <div style={{ padding: "20px 0", fontSize: 12, color: "var(--text-dim)", textAlign: "center" }}>{ap("noProvidersMatch")}</div>
+            <div style={{ padding: "20px 0", fontSize: 12, color: "var(--text-dim)", textAlign: "center" }}>No providers match</div>
           ) : (
             <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(min(240px, 100%), 1fr))", gap: 8 }}>
               {showCustom && (
-                <div style={{ gridColumn: "1 / -1", fontSize: 10, fontWeight: 600, color: "var(--text-dim)", textTransform: "uppercase", letterSpacing: "0.07em" }}>{ap("customSection")}</div>
+                <div style={{ gridColumn: "1 / -1", fontSize: 10, fontWeight: 600, color: "var(--text-dim)", textTransform: "uppercase", letterSpacing: "0.07em" }}>Custom</div>
               )}
               {showCustom && (
                 <button
@@ -1259,8 +1223,8 @@ function AddProviderPicker({
                   onMouseLeave={(e) => { e.currentTarget.style.borderColor = "var(--border)"; e.currentTarget.style.background = "var(--bg-panel)"; }}
                 >
                   <div style={{ flex: 1, minWidth: 0 }}>
-                    <div style={{ fontSize: 12, fontWeight: 600, color: "var(--text)", lineHeight: 1.3, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{ap("openaiAnthropicCompat")}</div>
-                    <div style={{ fontSize: 10, color: "var(--text-dim)", marginTop: 2 }}>{ap("customEndpoint")}</div>
+                    <div style={{ fontSize: 12, fontWeight: 600, color: "var(--text)", lineHeight: 1.3, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>OpenAI / Anthropic compatible</div>
+                    <div style={{ fontSize: 10, color: "var(--text-dim)", marginTop: 2 }}>Custom endpoint format</div>
                   </div>
                   <span style={{ width: 26, height: 26, borderRadius: 5, background: "var(--bg-hover)", border: "1px dashed var(--border)", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
                     <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ color: "var(--text-dim)" }}>
@@ -1271,7 +1235,7 @@ function AddProviderPicker({
               )}
 
               {availableOAuth.length > 0 && (
-                <div style={{ gridColumn: "1 / -1", paddingTop: showCustom ? 6 : 0, fontSize: 10, fontWeight: 600, color: "var(--text-dim)", textTransform: "uppercase", letterSpacing: "0.07em" }}>{ap("subscriptionsSection")}</div>
+                <div style={{ gridColumn: "1 / -1", paddingTop: showCustom ? 6 : 0, fontSize: 10, fontWeight: 600, color: "var(--text-dim)", textTransform: "uppercase", letterSpacing: "0.07em" }}>Subscriptions</div>
               )}
               {availableOAuth.map((p) => (
                 <button key={p.id} onClick={() => { onSelectOAuth(p.id); onClose(); }}
@@ -1281,14 +1245,14 @@ function AddProviderPicker({
                 >
                   <div style={{ flex: 1, minWidth: 0 }}>
                     <div style={{ fontSize: 12, fontWeight: 600, color: "var(--text)", lineHeight: 1.3, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{p.name}</div>
-                    <div style={{ fontSize: 10, color: "var(--text-dim)", marginTop: 2 }}>{ap("oauthTag")}</div>
+                    <div style={{ fontSize: 10, color: "var(--text-dim)", marginTop: 2 }}>OAuth</div>
                   </div>
                   <ProviderIcon id={p.id} size={28} />
                 </button>
               ))}
 
               {availableApiKey.length > 0 && (
-                <div style={{ gridColumn: "1 / -1", paddingTop: availableOAuth.length > 0 ? 6 : 0, fontSize: 10, fontWeight: 600, color: "var(--text-dim)", textTransform: "uppercase", letterSpacing: "0.07em" }}>{ap("apiKeySection")}</div>
+                <div style={{ gridColumn: "1 / -1", paddingTop: availableOAuth.length > 0 ? 6 : 0, fontSize: 10, fontWeight: 600, color: "var(--text-dim)", textTransform: "uppercase", letterSpacing: "0.07em" }}>API Key</div>
               )}
               {availableApiKey.map((p) => (
                 <button key={p.id} onClick={() => { onSelectApiKey(p.id); onClose(); }}
@@ -1298,7 +1262,7 @@ function AddProviderPicker({
                 >
                   <div style={{ flex: 1, minWidth: 0 }}>
                     <div style={{ fontSize: 12, fontWeight: 600, color: "var(--text)", lineHeight: 1.3, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{p.displayName}</div>
-                    <div style={{ fontSize: 10, color: "var(--text-dim)", marginTop: 2 }}>{ap("modelCount", { count: p.modelCount })}</div>
+                    <div style={{ fontSize: 10, color: "var(--text-dim)", marginTop: 2 }}>{p.modelCount} models</div>
                   </div>
                   <ProviderIcon id={p.id} size={28} />
                 </button>
@@ -1314,8 +1278,38 @@ function AddProviderPicker({
 
 // ── Main component ────────────────────────────────────────────────────────────
 
+
+// ── Fetch models row (local feature) ──────────────────────────────────────────
+
+function FetchModelsRow({ provider, onClick }: { provider: ProviderEntry; onClick: () => void }) {
+  const baseUrl = (provider.baseUrl ?? "").trim();
+  const disabled = baseUrl.length === 0;
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 4, marginTop: 4 }}>
+      <button
+        onClick={onClick}
+        disabled={disabled}
+        style={{
+          alignSelf: "flex-start",
+          padding: "6px 12px",
+          border: `1px solid ${disabled ? "var(--border)" : "var(--accent)"}`,
+          borderRadius: 6,
+          background: "none",
+          color: disabled ? "var(--text-dim)" : "var(--accent)",
+          cursor: disabled ? "not-allowed" : "pointer",
+          fontSize: 12,
+          fontWeight: 600,
+        }}
+      >
+        Fetch models
+      </button>
+      {disabled && <span style={{ fontSize: 10, color: "var(--text-dim)" }}>Set base URL first</span>}
+    </div>
+  );
+}
+
 export function ModelsConfig({ onClose }: { onClose: () => void }) {
-  const mc = useTranslations("models");
+  const isMobile = useIsMobile();
   const [config, setConfig] = useState<ModelsJson>({ providers: {} });
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -1326,6 +1320,7 @@ export function ModelsConfig({ onClose }: { onClose: () => void }) {
   const [apiKeyProviders, setApiKeyProviders] = useState<ApiKeyProvider[]>([]);
   const [pickerOpen, setPickerOpen] = useState(false);
   const [fetchModelsFor, setFetchModelsFor] = useState<string | null>(null);
+  const fetchModelsProvider = fetchModelsFor ? config.providers?.[fetchModelsFor] : undefined;
 
   const loadOAuthProviders = useCallback(() => {
     fetch("/api/auth/providers")
@@ -1368,6 +1363,28 @@ export function ModelsConfig({ onClose }: { onClose: () => void }) {
     setConfig((prev) => ({ ...prev, providers: { ...(prev.providers ?? {}), [name]: p } }));
   }, []);
 
+  const importFetchedModels = useCallback((providerName: string, ids: string[]) => {
+    setConfig((prev) => {
+      const provider = prev.providers?.[providerName] ?? {};
+      const currentModels = provider.models ?? [];
+      const existing = new Set(currentModels.map((m) => m.id));
+      const newModels = ids
+        .map((id) => id.trim())
+        .filter((id) => id && !existing.has(id))
+        .map((id) => ({ id }));
+      if (newModels.length === 0) return prev;
+      return {
+        ...prev,
+        providers: {
+          ...(prev.providers ?? {}),
+          [providerName]: { ...provider, models: [...currentModels, ...newModels] },
+        },
+      };
+    });
+    setSelection({ type: "provider", name: providerName });
+  }, []);
+
+
   const renameProvider = useCallback((oldName: string, newName: string) => {
     setConfig((prev) => {
       const entries = Object.entries(prev.providers ?? {});
@@ -1408,27 +1425,6 @@ export function ModelsConfig({ onClose }: { onClose: () => void }) {
       setSelection({ type: "model", providerName, index: idx });
       return prev;
     });
-  }, []);
-
-  const importFetchedModels = useCallback((providerName: string, ids: string[]) => {
-    setConfig((prev) => {
-      const provider = prev.providers?.[providerName] ?? {};
-      const currentModels = provider.models ?? [];
-      const existing = new Set(currentModels.map((m) => m.id));
-      const newModels = ids
-        .map((id) => id.trim())
-        .filter((id) => id && !existing.has(id))
-        .map((id) => ({ id }));
-      if (newModels.length === 0) return prev;
-      return {
-        ...prev,
-        providers: {
-          ...(prev.providers ?? {}),
-          [providerName]: { ...provider, models: [...currentModels, ...newModels] },
-        },
-      };
-    });
-    setSelection({ type: "provider", name: providerName });
   }, []);
 
   const updateModel = useCallback((providerName: string, index: number, m: ModelEntry) => {
@@ -1473,7 +1469,6 @@ export function ModelsConfig({ onClose }: { onClose: () => void }) {
   const providers = Object.entries(config.providers ?? {});
   const activeOAuth = oauthProviders.filter((p) => p.loggedIn);
   const activeApiKey = apiKeyProviders.filter((p) => p.configured);
-  const fetchModelsProvider = fetchModelsFor ? config.providers?.[fetchModelsFor] : undefined;
 
   // Resolve current detail
   const detailContent = (() => {
@@ -1522,22 +1517,28 @@ export function ModelsConfig({ onClose }: { onClose: () => void }) {
     <>
     <div style={{ position: "fixed", inset: 0, zIndex: 1000, background: "rgba(0,0,0,0.35)", display: "flex", alignItems: "center", justifyContent: "center" }}
       onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}>
-      <div style={{ width: 860, height: "78vh", background: "var(--bg)", border: "1px solid var(--border)", borderRadius: 10, display: "flex", flexDirection: "column", boxShadow: "0 8px 32px rgba(0,0,0,0.18)", overflow: "hidden" }}>
+      <div style={{ width: isMobile ? "calc(100vw - 16px)" : 860, maxWidth: "calc(100vw - 16px)", height: isMobile ? "calc(100dvh - 16px)" : "78vh", maxHeight: "calc(100dvh - 16px)", background: "var(--bg)", border: "1px solid var(--border)", borderRadius: 10, display: "flex", flexDirection: "column", boxShadow: "0 8px 32px rgba(0,0,0,0.18)", overflow: "hidden" }}>
 
         {/* Header */}
         <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "12px 18px", borderBottom: "1px solid var(--border)", flexShrink: 0 }}>
           <div style={{ display: "flex", alignItems: "baseline", gap: 10 }}>
-            <span style={{ fontSize: 15, fontWeight: 700, color: "var(--text)" }}>{mc("title")}</span>
+            <span style={{ fontSize: 15, fontWeight: 700, color: "var(--text)" }}>Models</span>
             <code style={{ fontSize: 11, color: "var(--text-muted)", fontFamily: "var(--font-mono)" }}>~/.pi/agent/models.json</code>
           </div>
           <button onClick={onClose} style={{ background: "none", border: "none", color: "var(--text-muted)", cursor: "pointer", fontSize: 20, lineHeight: 1, padding: "2px 6px" }}>×</button>
         </div>
 
         {/* Body */}
-        <div style={{ flex: 1, display: "flex", overflow: "hidden" }}>
+        <div style={{ flex: 1, display: "flex", flexDirection: isMobile ? "column" : "row", overflow: "hidden" }}>
 
           {/* Left: tree */}
-          <div style={{ width: 210, borderRight: "1px solid var(--border)", display: "flex", flexDirection: "column", flexShrink: 0, background: "var(--bg-panel)" }}>
+          <div style={{
+            width: isMobile ? "100%" : 210,
+            maxHeight: isMobile ? "40vh" : undefined,
+            borderRight: isMobile ? "none" : "1px solid var(--border)",
+            borderBottom: isMobile ? "1px solid var(--border)" : "none",
+            display: "flex", flexDirection: "column", flexShrink: 0, background: "var(--bg-panel)",
+          }}>
             <div style={{ flex: 1, overflowY: "auto", padding: "8px 6px" }}>
               {/* Active OAuth subscriptions */}
               {activeOAuth.map((p) => {
@@ -1580,7 +1581,7 @@ export function ModelsConfig({ onClose }: { onClose: () => void }) {
 
               {/* Custom providers */}
               {loading ? (
-                <div style={{ padding: "10px 8px", fontSize: 12, color: "var(--text-muted)" }}>{mc("loading")}</div>
+                <div style={{ padding: "10px 8px", fontSize: 12, color: "var(--text-muted)" }}>Loading…</div>
               ) : providers.map(([pName, pData]) => {
                 const isProviderSelected = selection?.type === "provider" && selection.name === pName;
                 const models = pData.models ?? [];
@@ -1617,7 +1618,7 @@ export function ModelsConfig({ onClose }: { onClose: () => void }) {
                           onMouseLeave={(e) => { if (!isModelSelected) e.currentTarget.style.background = "none"; }}
                         >
                           <span style={{ fontSize: 11, fontFamily: "var(--font-mono)", color: m.id ? "var(--text-muted)" : "var(--text-dim)", flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                            {m.id || mc("newModel")}
+                            {m.id || "new model"}
                           </span>
                           {m.reasoning && (
                             <span style={{ fontSize: 9, padding: "1px 4px", background: "rgba(99,102,241,0.12)", color: "rgba(99,102,241,0.8)", borderRadius: 3, flexShrink: 0 }}>T</span>
@@ -1633,7 +1634,7 @@ export function ModelsConfig({ onClose }: { onClose: () => void }) {
                       onMouseEnter={(e) => { e.currentTarget.style.color = "var(--accent)"; e.currentTarget.style.background = "var(--bg-hover)"; }}
                       onMouseLeave={(e) => { e.currentTarget.style.color = "var(--text-dim)"; e.currentTarget.style.background = "none"; }}
                     >
-                      <span style={{ fontSize: 11 }}>{mc("addModel")}</span>
+                      <span style={{ fontSize: 11 }}>+ model</span>
                     </div>
                   </div>
                 );
@@ -1650,7 +1651,7 @@ export function ModelsConfig({ onClose }: { onClose: () => void }) {
                 onMouseEnter={(e) => { e.currentTarget.style.borderColor = "var(--accent)"; e.currentTarget.style.color = "var(--accent)"; }}
                 onMouseLeave={(e) => { e.currentTarget.style.borderColor = "var(--border)"; e.currentTarget.style.color = "var(--text-muted)"; }}
               >
-                + {mc("addProvider")}
+                + Add provider
               </button>
             </div>
           </div>
@@ -1659,7 +1660,7 @@ export function ModelsConfig({ onClose }: { onClose: () => void }) {
           <div style={{ flex: 1, overflowY: "auto", padding: 20 }}>
             {loading ? null : detailContent ?? (
               <div style={{ height: "100%", display: "flex", alignItems: "center", justifyContent: "center", color: "var(--text-dim)", fontSize: 13 }}>
-                {mc("selectProviderOrModel")}
+                Select a provider or model
               </div>
             )}
           </div>
@@ -1689,7 +1690,7 @@ export function ModelsConfig({ onClose }: { onClose: () => void }) {
                 <polyline points="20 6 9 17 4 12" />
               </svg>
             )}
-            <span>{savedOk ? mc("saved") : saving ? mc("saving") : mc("save")}</span>
+            <span>{savedOk ? "Saved" : saving ? "Saving…" : "Save"}</span>
           </button>
         </div>
       </div>
@@ -1704,6 +1705,7 @@ export function ModelsConfig({ onClose }: { onClose: () => void }) {
         onClose={() => setPickerOpen(false)}
       />
     )}
+    
     {fetchModelsFor && fetchModelsProvider && (
       <FetchModelsDialog
         providerName={fetchModelsFor}
@@ -1713,6 +1715,6 @@ export function ModelsConfig({ onClose }: { onClose: () => void }) {
         onClose={() => setFetchModelsFor(null)}
       />
     )}
-    </>
+</>
   );
 }
