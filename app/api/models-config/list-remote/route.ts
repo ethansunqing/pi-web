@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 import { mkdtempSync, rmSync, writeFileSync } from "fs";
 import { tmpdir } from "os";
 import { join } from "path";
-import { AuthStorage, ModelRegistry } from "@earendil-works/pi-coding-agent";
+import { ModelRuntime } from "@earendil-works/pi-coding-agent";
 
 export const dynamic = "force-dynamic";
 
@@ -140,7 +140,7 @@ export async function POST(req: Request) {
     let providerEnv: Record<string, string> | undefined;
 
     if (!apiKey) {
-      // Build an isolated registry pointed at a temp models.json so we can
+      // Build an isolated ModelRuntime pointed at a temp models.json so we can
       // resolve auth via the same code path the agent uses without polluting
       // global config.
       tempDir = mkdtempSync(join(tmpdir(), "pi-web-list-models-"));
@@ -155,16 +155,18 @@ export async function POST(req: Request) {
         "utf8",
       );
 
-      const authStorage = AuthStorage.create();
-      const registry = ModelRegistry.create(authStorage, modelsPath);
-      const loadError = registry.getError();
+      const modelRuntime = await ModelRuntime.create({ modelsPath });
+      const loadError = modelRuntime.getError();
       if (loadError) return NextResponse.json({ ok: false, error: loadError });
-      const probeModel = registry.find(providerName, "__probe__");
+      const probeModel = modelRuntime.getModel(providerName, "__probe__");
       if (probeModel) {
-        const auth = await registry.getApiKeyAndHeaders(probeModel);
-        if (auth.ok && auth.apiKey) apiKey = auth.apiKey;
+        const resolved = await modelRuntime.getAuth(probeModel);
+        if (resolved?.auth.apiKey) apiKey = resolved.auth.apiKey;
+        // Provider-scoped env (e.g. Cloudflare account/gateway ids) resolved
+        // from stored credentials and ambient context - same source the agent
+        // uses at request time.
+        providerEnv = resolved?.env;
       }
-      providerEnv = authStorage.getProviderEnv(providerName);
     }
 
     if (!apiKey) {
