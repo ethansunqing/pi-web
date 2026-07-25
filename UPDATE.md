@@ -1,5 +1,34 @@
 # 更新日志
 
+## 2026-07-25 — v0.8.0（同步上游 agegr/pi-web v0.8.0）
+
+### 同步范围
+- 分支 `sync/upstream-0.8.0` 从 `custom/main` 出发，分批合并 `upstream/main`（v0.8.0）。
+- pi 相关依赖固定为 **0.82.1**（`pi-ai` / `pi-coding-agent` / `pi-agent-core` / `pi-tui`），高于上游 pin 的 0.81.1。
+- 应用版本：`0.6.20` → `0.8.0`。
+
+### 上游能力接入（节选）
+- AgentSession 扩展：extensions / plugins / slash commands / session naming / shell-prefix / custom UI terminal。
+- 会话与文件：worktree 分组、file-index、git status/diff 预览、bash-output、thinking 按需加载、auto-name。
+- 渲染：Mermaid、split-diff 增强、Markdown 链路与 globals 样式重构。
+- 输入与壳层：lazy-load 聊天、minimap/extension UI、键盘快捷键、插件管理 UI。
+- Auth：`AuthStorage` → `ModelRuntime` 迁移（适配 pi 0.82.1）。
+
+### 本地能力保留
+- next-intl 双语（`zh-CN` / `en`）与语言切换菜单。
+- 健康检查 `GET /api/health`、live status / `status_update`。
+- 会话 Markdown 导出（`?format=markdown`）与 `lib/export-markdown.ts`。
+- 自定义供应商远程拉模型（`FetchModelsDialog` + `list-remote`）。
+- `normalizeCwd`、Kimi icon 回退（Moonshot）。
+
+### 已知后续
+- 上游新 UI 文案的完整中文 i18n 尚未扫完（MessageView/FileViewer/语言菜单已部分覆盖）；界面可能混有英文，需 Batch 5 补齐 `messages/*.json`。
+- 建议在 `npm run dev` 下手动验证：会话列表、发消息、compaction、文件预览/diff、导出 HTML/Markdown、auth 登录、拉模型。
+
+### 验证
+- `tsc --noEmit` 通过（合并过程中持续校验）。
+- `lib/file-links` + `session-file-references` 单测 10 项通过。
+
 ## 2026-07-11 — v0.6.20
 
 ### 升级 pi 依赖
