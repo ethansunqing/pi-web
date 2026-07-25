@@ -15,6 +15,8 @@ export interface ContextUsage {
 export interface ModelLike {
   id: string;
   provider: string;
+  /** Present on real pi models; optional so structural mocks stay light. */
+  contextWindow?: number;
 }
 
 export interface ToolInfo {
@@ -125,7 +127,7 @@ export interface AgentSessionLike {
   readonly model: ModelLike | undefined;
   readonly modelRuntime: {
     getModel: (provider: string, modelId: string) => ModelLike | undefined;
-    reloadConfig: () => Promise<void>;
+    refresh: () => Promise<unknown>;
   };
   readonly sessionManager: SessionManager;
   readonly settingsManager: SettingsManager;
