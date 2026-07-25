@@ -1,12 +1,10 @@
 import type { Options as ReactMarkdownOptions } from "react-markdown";
 import rehypeKatex from "rehype-katex";
+import rehypeRaw from "rehype-raw";
 import rehypeSanitize, { defaultSchema } from "rehype-sanitize";
 import remarkGfm from "remark-gfm";
 import remarkMath from "remark-math";
 
-// Sanitize schema tightened for assistant output: keep code highlighting +
-// katex class names, strip iframe/object/style/form which could carry XSS or
-// disruptive content.
 const markdownSanitizeSchema = {
   ...defaultSchema,
   attributes: {
@@ -16,17 +14,46 @@ const markdownSanitizeSchema = {
   strip: [...(defaultSchema.strip || []), "iframe", "object", "style", "form"],
 };
 
-export const markdownRemarkPlugins: ReactMarkdownOptions["remarkPlugins"] = [remarkGfm, remarkMath];
-export const markdownPreviewRemarkPlugins: ReactMarkdownOptions["remarkPlugins"] = [remarkGfm];
+export function normalizeDisplayMath(markdown: string): string {
+  const lineBreak = markdown.includes("\r\n") ? "\r\n" : "\n";
+  const lines = markdown.split(/\r?\n/);
+  let fence: { marker: string; size: number } | null = null;
 
-// Full render of assistant markdown: gfm + math, then katex. Sanitize is a
-// defense-in-depth layer — react-markdown does not render raw HTML by default,
-// but sanitize ensures any future rehype-raw does not introduce an XSS path.
+  return lines
+    .map((line) => {
+      const fenceMatch = line.match(/^ {0,3}(`{3,}|~{3,})/);
+      if (fenceMatch) {
+        const marker = fenceMatch[1][0];
+        const size = fenceMatch[1].length;
+        if (!fence) fence = { marker, size };
+        else if (marker === fence.marker && size >= fence.size) fence = null;
+        return line;
+      }
+
+      if (fence) return line;
+
+      const displayMathMatch = line.match(/^([ \t]{0,3})\$\$(.+)\$\$[ \t]*$/);
+      if (!displayMathMatch) return line;
+
+      const math = displayMathMatch[2].trim();
+      if (!math) return line;
+
+      return `${displayMathMatch[1]}$$${lineBreak}${math}${lineBreak}${displayMathMatch[1]}$$`;
+    })
+    .join(lineBreak);
+}
+
+export const markdownRemarkPlugins: ReactMarkdownOptions["remarkPlugins"] = [remarkGfm, remarkMath];
+export const markdownPreviewRemarkPlugins: ReactMarkdownOptions["remarkPlugins"] = [remarkGfm, remarkMath];
+
 export const markdownRehypePlugins: ReactMarkdownOptions["rehypePlugins"] = [
+  rehypeRaw,
   [rehypeSanitize, markdownSanitizeSchema],
   [rehypeKatex, { throwOnError: false, strict: false }],
 ];
 
 export const markdownPreviewRehypePlugins: ReactMarkdownOptions["rehypePlugins"] = [
+  rehypeRaw,
   [rehypeSanitize, markdownSanitizeSchema],
+  [rehypeKatex, { throwOnError: false, strict: false }],
 ];

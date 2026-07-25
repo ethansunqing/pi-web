@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { statSync, type Stats } from "fs";
 import { normalizeCwd } from "@/lib/cwd";
+import { allowFileRoot } from "@/lib/file-access";
 
 // POST /api/cwd/validate  body: { cwd: string }
 // Validates a candidate workspace before the UI selects it.
@@ -25,6 +26,7 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: `Path is not a directory: ${cwd}` }, { status: 400 });
     }
 
+    allowFileRoot(normalizedCwd);
     return NextResponse.json({ success: true, cwd: normalizedCwd });
   } catch (error) {
     return NextResponse.json({ error: String(error) }, { status: 500 });
